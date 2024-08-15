@@ -41,9 +41,9 @@ config.keys = {
   { key = 'Enter',      mods = 'ALT',   action = act.ShowLauncher },
   { key = 'Enter',      mods = 'CTRL',  action = act.ShowTabNavigator },
   { key = 'l',          mods = 'CTRL',  action = act.ShowDebugOverlay },
-  { key = '+',          mods = 'CTRL',  action='IncreaseFontSize' },
-  { key = '-',          mods = 'CTRL',  action='DecreaseFontSize' },
-  { key = '0',          mods = 'CTRL',  action='ResetFontSize' },
+  { key = '+',          mods = 'CTRL',  action = 'IncreaseFontSize' },
+  { key = '-',          mods = 'CTRL',  action = 'DecreaseFontSize' },
+  { key = '0',          mods = 'CTRL',  action = 'ResetFontSize' },
 }
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
@@ -67,7 +67,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
 	
   table.insert(launch_menu, {
     label = 'PowerShell',
-    args = { 'powershell.exe', '-NoLogo'}
+    args = { 'powershell.exe', '-NoLogo'},
   })
 end
 
