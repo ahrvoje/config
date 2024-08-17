@@ -61,7 +61,7 @@ local launch_menu = {}
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   table.insert(launch_menu, {
-	label = 'Git Bash',
+    label = 'Git Bash',
     args = { 'c:/Program Files/Git/bin/bash.exe', '-i', '-l' },
   })
 	
