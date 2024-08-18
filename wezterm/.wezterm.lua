@@ -3,6 +3,7 @@ local act = wezterm.action
 
 local config = wezterm.config_builder()
 
+config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
 config.check_for_updates = false
 config.disable_default_key_bindings = true
@@ -43,9 +44,48 @@ config.keys = {
   { key = 'Enter',      mods = 'ALT',        action = act.ShowLauncher },
   { key = 'Enter',      mods = 'CTRL',       action = act.ShowTabNavigator },
   { key = 'l',          mods = 'CTRL',       action = act.ShowDebugOverlay },
-  { key = '+',          mods = 'CTRL',       action = 'IncreaseFontSize' },
-  { key = '-',          mods = 'CTRL',       action = 'DecreaseFontSize' },
-  { key = '0',          mods = 'CTRL',       action = 'ResetFontSize' },
+  { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
+  { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
+  { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
+  { key = 'c',          mods = 'CTRL',       action = act.CopyTo 'Clipboard' },
+  { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
+  { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
+  { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
+}
+
+config.key_tables = {
+  copy_mode = {
+    { key = 'Escape',     mods = 'NONE', action = act.CopyMode 'Close' },
+    { key = 'b',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Block' } },
+    { key = 'c',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Cell' } },
+    { key = 'w',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Word' } },
+    { key = 'l',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Line' } },
+    { key = 's',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
+    { key = 'LeftArrow',  mods = 'NONE', action = act.CopyMode 'MoveLeft' },
+    { key = 'RightArrow', mods = 'NONE', action = act.CopyMode 'MoveRight' },
+    { key = 'UpArrow',    mods = 'NONE', action = act.CopyMode 'MoveUp' },
+    { key = 'DownArrow',  mods = 'NONE', action = act.CopyMode 'MoveDown' },
+    { key = 'y',          mods = 'NONE', action = act.Multiple{
+      { CopyTo   = 'Clipboard' },
+      { CopyMode = 'ClearPattern' },
+      { CopyMode = 'Close' } },
+    },
+  },
+  search_mode = {
+    { key = 'Escape',   mods = 'NONE', action = act.CopyMode 'Close' },
+    { key = 'b',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Block' } },
+    { key = 'c',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Cell' } },
+    { key = 'w',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Word' } },
+    { key = 'l',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Line' } },
+    { key = 's',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
+    { key = 'PageUp',   mods = 'NONE', action = act.CopyMode 'NextMatch' },
+    { key = 'PageDown', mods = 'NONE', action = act.CopyMode 'PriorMatch' },
+    { key = 'y',        mods = 'NONE', action = act.Multiple{
+      { CopyTo   = 'Clipboard' },
+      { CopyMode = 'ClearPattern' },
+      { CopyMode = 'Close' } },
+    },
+  },
 }
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
