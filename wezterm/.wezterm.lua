@@ -16,9 +16,17 @@ config.initial_rows = 33
 config.window_decorations = 'RESIZE'
 config.window_padding = { left = 8, right = 8, top = 8, bottom = 8 }
 
-config.colors = {
-  background = '#000B07',
-}
+-- Selection of dark themes with acceptable contrast
+--
+-- config.color_scheme = 'Bright (base16)'
+-- config.color_scheme = 'Brogrammer'
+-- config.color_scheme = 'Brogrammer (Gogh)'
+-- config.color_scheme = 'Frontend Delight (Gogh)'
+-- config.color_scheme = 'Gigavolt (base16)'
+config.color_scheme = 'Gruber (base16)'
+-- config.color_scheme = 'synthwave-everything'
+-- config.color_scheme = 'Vs Code Dark+ (Gogh)'
+-- config.color_scheme = 'Windows NT (base16)'
 
 config.keys = {
   { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
@@ -91,7 +99,7 @@ config.key_tables = {
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   config.set_environment_variables = {
-    prompt = '$E[92m$P$E[36m $E[93m$+$E[36m$G$G$G$E[0m ',
+    prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
   }
 
   -- Set Unicode coding page 65001
