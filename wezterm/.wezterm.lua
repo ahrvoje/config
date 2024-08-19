@@ -12,9 +12,9 @@ config.font = wezterm.font 'Consolas'
 config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 120
-config.initial_rows = 30
+config.initial_rows = 33
 config.window_decorations = 'RESIZE'
-config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
+config.window_padding = { left = 8, right = 8, top = 8, bottom = 8 }
 
 config.colors = {
   background = '#000B07',
