@@ -9,9 +9,10 @@ config.check_for_updates = false
 config.disable_default_key_bindings = true
 config.enable_scroll_bar = true
 config.font = wezterm.font 'Consolas'
+config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
-config.initial_cols = 101
-config.initial_rows = 36
+config.initial_cols = 120
+config.initial_rows = 30
 config.window_decorations = 'RESIZE'
 config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
 
@@ -93,9 +94,11 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     prompt = '$E[92m$P$E[36m $E[93m$+$E[36m$G$G$G$E[0m ',
   }
 
+  -- Set Unicode coding page 65001
   -- And inject clink into the command prompt
-  config.default_prog =
-    { 'cmd.exe', '/s', '/k', 'c:/utils/clink/clink_x64.exe', 'inject', '-q' }
+  config.default_prog = {
+    'cmd.exe', '/s', '/k', 'chcp 65001 > nul && c:/utils/clink/clink_x64.exe', 'inject', '-q'
+  }
 end
 
 
@@ -106,7 +109,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     label = 'Git Bash',
     args = { 'c:/Program Files/Git/bin/bash.exe', '-i', '-l' },
   })
-	
+  
   table.insert(launch_menu, {
     label = 'PowerShell',
     args = { 'powershell.exe', '-NoLogo'},
