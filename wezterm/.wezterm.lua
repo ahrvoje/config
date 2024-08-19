@@ -60,36 +60,48 @@ config.keys = {
   { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
   { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
   { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
+  { key = 'Home',       mods = 'NONE',       action = act.ScrollToTop },
+  { key = 'End',        mods = 'NONE',       action = act.ScrollToBottom },
+  { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
+  { key = 'PageDown',   mods = 'NONE',       action = act.ScrollByPage(0.5) },
 }
 
 config.key_tables = {
   copy_mode = {
     { key = 'Escape',     mods = 'NONE', action = act.CopyMode 'Close' },
-    { key = 'b',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Block' } },
-    { key = 'c',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Cell' } },
-    { key = 'w',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Word' } },
-    { key = 'l',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Line' } },
-    { key = 's',          mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
+    { key = 'b',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Block' } },
+    { key = 'c',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Cell' } },
+    { key = 'w',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Word' } },
+    { key = 'l',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Line' } },
+    { key = 's',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
     { key = 'LeftArrow',  mods = 'NONE', action = act.CopyMode 'MoveLeft' },
     { key = 'RightArrow', mods = 'NONE', action = act.CopyMode 'MoveRight' },
     { key = 'UpArrow',    mods = 'NONE', action = act.CopyMode 'MoveUp' },
     { key = 'DownArrow',  mods = 'NONE', action = act.CopyMode 'MoveDown' },
-    { key = 'y',          mods = 'NONE', action = act.Multiple{
+    { key = 'Enter',      mods = 'NONE', action = act.Multiple{
       { CopyTo   = 'Clipboard' },
       { CopyMode = 'ClearPattern' },
       { CopyMode = 'Close' } },
     },
   },
+  
   search_mode = {
-    { key = 'Escape',   mods = 'NONE', action = act.CopyMode 'Close' },
-    { key = 'b',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Block' } },
-    { key = 'c',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Cell' } },
-    { key = 'w',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Word' } },
-    { key = 'l',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'Line' } },
-    { key = 's',        mods = 'NONE', action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
-    { key = 'PageUp',   mods = 'NONE', action = act.CopyMode 'NextMatch' },
-    { key = 'PageDown', mods = 'NONE', action = act.CopyMode 'PriorMatch' },
-    { key = 'y',        mods = 'NONE', action = act.Multiple{
+    { key = 'Escape',     mods = 'NONE', action = act.Multiple{
+      { CopyMode = 'ClearPattern' },
+      { CopyMode = 'Close' } },
+    },
+    { key = 'b',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Block' } },
+    { key = 'c',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Cell' } },
+    { key = 'w',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Word' } },
+    { key = 'l',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Line' } },
+    { key = 's',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
+    { key = 'PageUp',     mods = 'NONE', action = act.CopyMode 'PriorMatch' },
+    { key = 'PageDown',   mods = 'NONE', action = act.CopyMode 'NextMatch' },
+    { key = 'LeftArrow',  mods = 'NONE', action = act.CopyMode 'MoveLeft' },
+    { key = 'RightArrow', mods = 'NONE', action = act.CopyMode 'MoveRight' },
+    { key = 'UpArrow',    mods = 'NONE', action = act.CopyMode 'MoveUp' },
+    { key = 'DownArrow',  mods = 'NONE', action = act.CopyMode 'MoveDown' },
+    { key = 'Enter',      mods = 'NONE', action = act.Multiple{
       { CopyTo   = 'Clipboard' },
       { CopyMode = 'ClearPattern' },
       { CopyMode = 'Close' } },
@@ -102,8 +114,8 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
   }
 
-  -- Set Unicode coding page 65001
-  -- And inject clink into the command prompt
+  -- set Unicode coding page 65001
+  -- and inject clink into the command prompt
   config.default_prog = {
     'cmd.exe', '/s', '/k', 'chcp 65001 > nul && c:/utils/clink/clink_x64.exe', 'inject', '-q'
   }
