@@ -19,11 +19,11 @@ config.window_padding = { left = 8, right = 8, top = 8, bottom = 8 }
 -- Selection of dark themes with acceptable contrast
 --
 -- config.color_scheme = 'Bright (base16)'
--- config.color_scheme = 'Brogrammer'
+config.color_scheme = 'Brogrammer'
 -- config.color_scheme = 'Brogrammer (Gogh)'
 -- config.color_scheme = 'Frontend Delight (Gogh)'
 -- config.color_scheme = 'Gigavolt (base16)'
-config.color_scheme = 'Gruber (base16)'
+-- config.color_scheme = 'Gruber (base16)'
 -- config.color_scheme = 'synthwave-everything'
 -- config.color_scheme = 'Vs Code Dark+ (Gogh)'
 -- config.color_scheme = 'Windows NT (base16)'
@@ -60,8 +60,8 @@ config.keys = {
   { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
   { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
   { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
-  { key = 'Home',       mods = 'NONE',       action = act.ScrollToTop },
-  { key = 'End',        mods = 'NONE',       action = act.ScrollToBottom },
+  { key = 'Home',       mods = 'CTRL',       action = act.ScrollToTop },
+  { key = 'End',        mods = 'CTRL',       action = act.ScrollToBottom },
   { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
   { key = 'PageDown',   mods = 'NONE',       action = act.ScrollByPage(0.5) },
 }
@@ -117,7 +117,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   -- set Unicode coding page 65001
   -- and inject clink into the command prompt
   config.default_prog = {
-    'cmd.exe', '/s', '/k', 'chcp 65001 > nul && c:/utils/clink/clink_x64.exe', 'inject', '-q'
+    'cmd.exe', '/s', '/k', 'chcp 65001 > nul && c:/utils/clink/clink_x64.exe', 'inject', '-q',
   }
 end
 
