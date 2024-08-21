@@ -28,6 +28,19 @@ config.color_scheme = 'Brogrammer'
 -- config.color_scheme = 'Vs Code Dark+ (Gogh)'
 -- config.color_scheme = 'Windows NT (base16)'
 
+
+-- Ctrl+c has a double role:
+--    KeyboardInterrupt if there is no selection
+--    Copy to clipboard if selection is available
+action_ctrl_c = function(window, pane)
+  local sel = window:get_selection_text_for_pane(pane)
+  if (not sel or sel == '') then
+    window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
+  else
+    window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
+  end
+end
+
 config.keys = {
   { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
   { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
@@ -56,7 +69,7 @@ config.keys = {
   { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
   { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
   { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
-  { key = 'c',          mods = 'CTRL',       action = act.CopyTo 'Clipboard' },
+  { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback(action_ctrl_c)},
   { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
   { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
   { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
