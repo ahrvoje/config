@@ -39,6 +39,37 @@ get_process_name = function(pane)
   return name:match("([^/\\]+)%.exe$") or name:match("([^/\\]+)$")
 end
 
+----------------------------------------------------------------------------------
+-- Better shell detection
+--   There is no way to detect is a shell idle or some process running so these
+--   kind of heuristics are needed, and they can fail for some novel case.
+--   https://wezfurlong.org/wezterm/config/lua/config/skip_close_confirmation_for_processes_named.html
+--   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
+--   https://github.com/wez/wezterm/issues/843
+is_shell = function(pane)
+  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6 }
+  
+  process_name = get_process_name(pane)
+  if (shells[process_name] ~= nil) then
+    return true
+  end
+  
+  process_info = pane:get_foreground_process_info()
+  wezterm.log_info(process_info['argv'])
+  
+  if ((process_name == 'python') and (#(process_info.argv) == 1)) then
+    return true
+  end
+  if ((process_name == 'python') and (#(process_info.argv) == 2) and (process_info.argv[2]:match('ptpython'))) then
+    return true
+  end
+  
+  if ((process_name == 'julia') and (#(process_info.argv) == 1)) then
+    return true
+  end
+  
+  return false
+end
 
 ----------------------------------------------------------------------------------
 -- 'Ctrl+c' key has a double role:
@@ -52,17 +83,22 @@ action_ctrl_c = function(window, pane)
     window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
   end
 end
+
 ----------------------------------------------------------------------------------
+-- 'Ctrl+Shift+L' log current process info into debug overlay
+action_log_process = function(window, pane)
+  process_info = pane:get_foreground_process_info()
+  wezterm.log_info(process_info)
+end
 
 ----------------------------------------------------------------------------------
 -- 'Home'/'Up'/'Down' keys have a double role
 --   Default line-start/history-up/history-down if shell is active
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
 action_home = function(window, pane)
-  shells = {cmd = 1, bash = 2, powershell = 3}
-
   process_name = get_process_name(pane)
-  if (shells[process_name] ~= nil) then
+
+  if is_shell(pane) then
     window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollToTop, pane)
@@ -70,10 +106,7 @@ action_home = function(window, pane)
 end
 
 action_up = function(window, pane)
-  shells = {cmd = 1, bash = 2, powershell = 3}
-
-  process_name = get_process_name(pane)
-  if (shells[process_name] ~= nil) then
+  if is_shell(pane) then
     window:perform_action(act.SendKey{ key='UpArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(-1), pane)
@@ -81,16 +114,12 @@ action_up = function(window, pane)
 end
 
 action_down = function(window, pane)
-  shells = {cmd = 1, bash = 2, powershell = 3}
-
-  process_name = get_process_name(pane)
-  if (shells[process_name] ~= nil) then
+  if is_shell(pane) then
     window:perform_action(act.SendKey{ key='DownArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(1), pane)
   end
 end
-----------------------------------------------------------------------------------
 
 config.keys = {
   { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
@@ -117,10 +146,11 @@ config.keys = {
   { key = 'Enter',      mods = 'ALT',        action = act.ShowLauncher },
   { key = 'Enter',      mods = 'CTRL',       action = act.ShowTabNavigator },
   { key = 'l',          mods = 'CTRL',       action = act.ShowDebugOverlay },
+  { key = 'L',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
   { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
   { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
   { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
-  { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback(action_ctrl_c)},
+  { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c )},
   { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
   { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
   { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
@@ -128,9 +158,9 @@ config.keys = {
   { key = 'End',        mods = 'CTRL',       action = act.ScrollToBottom },
   { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
   { key = 'PageDown',   mods = 'NONE',       action = act.ScrollByPage(0.5) },
-  { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback(action_home) },
-  { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback(action_up) },
-  { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback(action_down) },
+  { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
+  { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
+  { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
 }
 
 config.key_tables = {
