@@ -18,8 +18,8 @@ config.window_padding = { left = 8, right = 8, top = 8, bottom = 8 }
 
 -- Selection of dark themes with acceptable contrast
 --
--- config.color_scheme = 'Bright (base16)'
-config.color_scheme = 'Brogrammer'
+config.color_scheme = 'Bright (base16)'
+-- config.color_scheme = 'Brogrammer'
 -- config.color_scheme = 'Brogrammer (Gogh)'
 -- config.color_scheme = 'Frontend Delight (Gogh)'
 -- config.color_scheme = 'Gigavolt (base16)'
@@ -130,7 +130,10 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   -- set Unicode coding page 65001
   -- and inject clink into the command prompt
   config.default_prog = {
-    'cmd.exe', '/s', '/k', 'chcp 65001 > nul && c:/utils/clink/clink_x64.exe', 'inject', '-q',
+    'cmd.exe', '/s', '/k',
+      'chcp', '65001', '>', 'nul', '&&',
+      'c:/utils/clink/clink_x64.exe', 'inject', '-q', '&&',
+      'c:/utils/clink/clink_x64.exe', 'set', 'autosuggest.enable', 'false', '>', 'nul',
   }
 end
 

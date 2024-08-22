@@ -11,9 +11,6 @@ set completion-auto-query-items               on
 set history-point-at-end-of-anchored-search   on
 set search-ignore-case                        on
 
-# Don't suggest history-based autocompletion
-set autosuggest.enable    false
-
 # Documentation on special keys binding sequences
 # https://chrisant996.github.io/clink/clink.html#specialkeys
 
