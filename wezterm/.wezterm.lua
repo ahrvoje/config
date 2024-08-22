@@ -55,7 +55,6 @@ is_shell = function(pane)
   end
   
   process_info = pane:get_foreground_process_info()
-  wezterm.log_info(process_info['argv'])
   
   if ((process_name == 'python') and (#(process_info.argv) == 1)) then
     return true
