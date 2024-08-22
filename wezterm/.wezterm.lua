@@ -36,6 +36,12 @@ config.window_padding        = { left = 8, right = 16, top = 4, bottom = 4 }  --
 
 get_process_name = function(pane)
   name = pane:get_foreground_process_name()
+
+  -- this case covers lua debug overlay
+  if (name == nil) then
+    return nil
+  end
+  
   return name:match("([^/\\]+)%.exe$") or name:match("([^/\\]+)$")
 end
 
@@ -50,6 +56,12 @@ is_shell = function(pane)
   local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6 }
   
   process_name = get_process_name(pane)
+  
+  -- this case covers lua debug overlay
+  if (process_name == nil) then
+    return true
+  end
+
   if (shells[process_name] ~= nil) then
     return true
   end
@@ -221,6 +233,30 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
 end
 
 config.launch_menu = launch_menu
+
+
+-- Top left & right status bar
+wezterm.on("update-left-status", function(window, pane)
+  window:set_left_status(wezterm.format({}))
+end);
+wezterm.on("update-right-status", function(window, pane)
+  process_info = pane:get_foreground_process_info()
+
+  -- this case covers lua debug overlay
+  if (process_info == nil) then
+    return
+  end
+
+  -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601; 134774 days before UNIX
+  -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
+  unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400)
+
+  window:set_right_status(wezterm.format({
+--    {Attribute={Underline="Single"}},
+--    {Attribute={Italic=true}},
+    {Text='Started: ' .. os.date('%b %d %X', unix_time) .. '      '},
+  }));
+end);
 
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
