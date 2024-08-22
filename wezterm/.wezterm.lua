@@ -39,6 +39,8 @@ get_process_name = function(pane)
   return name:match("([^/\\]+)%.exe$") or name:match("([^/\\]+)$")
 end
 
+
+----------------------------------------------------------------------------------
 -- 'Ctrl+c' key has a double role:
 --   KeyboardInterrupt if there is no selection
 --   Copy to clipboard if selection is available
@@ -50,10 +52,12 @@ action_ctrl_c = function(window, pane)
     window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
   end
 end
+----------------------------------------------------------------------------------
 
--- 'Home' key has a double role
---   Default beginning of the line if shell is active
---   Scroll to top if no shell/prompt is active
+----------------------------------------------------------------------------------
+-- 'Home'/'Up'/'Down' keys have a double role
+--   Default line-start/history-up/history-down if shell is active
+--   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
 action_home = function(window, pane)
   shells = {cmd = 1, bash = 2, powershell = 3}
 
@@ -64,6 +68,29 @@ action_home = function(window, pane)
     window:perform_action(act.ScrollToTop, pane)
   end
 end
+
+action_up = function(window, pane)
+  shells = {cmd = 1, bash = 2, powershell = 3}
+
+  process_name = get_process_name(pane)
+  if (shells[process_name] ~= nil) then
+    window:perform_action(act.SendKey{ key='UpArrow', mods='NONE' }, pane)
+  else
+    window:perform_action(act.ScrollByLine(-1), pane)
+  end
+end
+
+action_down = function(window, pane)
+  shells = {cmd = 1, bash = 2, powershell = 3}
+
+  process_name = get_process_name(pane)
+  if (shells[process_name] ~= nil) then
+    window:perform_action(act.SendKey{ key='DownArrow', mods='NONE' }, pane)
+  else
+    window:perform_action(act.ScrollByLine(1), pane)
+  end
+end
+----------------------------------------------------------------------------------
 
 config.keys = {
   { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
@@ -97,11 +124,13 @@ config.keys = {
   { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
   { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
   { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
-  { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback(action_home) },
   { key = 'Home',       mods = 'CTRL',       action = act.ScrollToTop },
   { key = 'End',        mods = 'CTRL',       action = act.ScrollToBottom },
   { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
   { key = 'PageDown',   mods = 'NONE',       action = act.ScrollByPage(0.5) },
+  { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback(action_home) },
+  { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback(action_up) },
+  { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback(action_down) },
 }
 
 config.key_tables = {
