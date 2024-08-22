@@ -7,14 +7,13 @@ config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
 config.check_for_updates = false
 config.disable_default_key_bindings = true
-config.enable_scroll_bar = true
 config.font = wezterm.font 'Consolas'
 config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
-config.initial_cols = 120
-config.initial_rows = 33
+config.initial_cols = 124
+config.initial_rows = 34
 config.window_decorations = 'RESIZE'
-config.window_padding = { left = 8, right = 8, top = 8, bottom = 8 }
+config.window_padding = { left = 8, top = 8, bottom = 8 }
 
 -- Selection of dark themes with acceptable contrast
 --
@@ -28,6 +27,11 @@ config.color_scheme = 'Bright (base16)'
 -- config.color_scheme = 'Vs Code Dark+ (Gogh)'
 -- config.color_scheme = 'Windows NT (base16)'
 
+-- Scrollbar
+config.enable_scroll_bar     = true
+config.min_scroll_bar_height = '2cell'
+config.window_padding        = { right = 16 }
+config.colors                = { scrollbar_thumb = '#556666' }
 
 -- Ctrl+c has a double role:
 --    KeyboardInterrupt if there is no selection
