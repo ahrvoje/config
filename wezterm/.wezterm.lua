@@ -3,6 +3,7 @@ local act = wezterm.action
 
 local config = wezterm.config_builder()
 
+
 config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
 config.check_for_updates = false
@@ -13,7 +14,6 @@ config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
 config.initial_rows = 33
 config.window_decorations = 'RESIZE'
-config.window_padding = { left = 8, top = 8, bottom = 8 }
 
 -- Selection of dark themes with acceptable contrast
 --
@@ -30,18 +30,38 @@ config.color_scheme = 'Bright (base16)'
 -- Scrollbar
 config.enable_scroll_bar     = true
 config.min_scroll_bar_height = '2cell'
-config.window_padding        = { right = 16 }
 config.colors                = { scrollbar_thumb = '#556666' }
+config.window_padding        = { left = 8, right = 16, top = 4, bottom = 4 }  -- right padding is scrollbar width
 
--- Ctrl+c has a double role:
---    KeyboardInterrupt if there is no selection
---    Copy to clipboard if selection is available
+
+get_process_name = function(pane)
+  name = pane:get_foreground_process_name()
+  return name:match("([^/\\]+)%.exe$") or name:match("([^/\\]+)$")
+end
+
+-- 'Ctrl+c' key has a double role:
+--   KeyboardInterrupt if there is no selection
+--   Copy to clipboard if selection is available
 action_ctrl_c = function(window, pane)
   local sel = window:get_selection_text_for_pane(pane)
   if (not sel or sel == '') then
     window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
   else
     window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
+  end
+end
+
+-- 'Home' key has a double role
+--   Default beginning of the line if shell is active
+--   Scroll to top if no shell/prompt is active
+action_home = function(window, pane)
+  shells = {cmd = 1, bash = 2, powershell = 3}
+
+  process_name = get_process_name(pane)
+  if (shells[process_name] ~= nil) then
+    window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
+  else
+    window:perform_action(act.ScrollToTop, pane)
   end
 end
 
@@ -77,6 +97,7 @@ config.keys = {
   { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
   { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
   { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
+  { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback(action_home) },
   { key = 'Home',       mods = 'CTRL',       action = act.ScrollToTop },
   { key = 'End',        mods = 'CTRL',       action = act.ScrollToBottom },
   { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
@@ -126,6 +147,24 @@ config.key_tables = {
   },
 }
 
+
+local launch_menu = {}
+
+if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
+  table.insert(launch_menu, {
+    label = 'Git Bash',
+    args = { 'c:/Program Files/Git/bin/bash.exe', '-i', '-l' },
+  })
+  
+  table.insert(launch_menu, {
+    label = 'PowerShell',
+    args = { 'powershell.exe', '-NoLogo'},
+  })
+end
+
+config.launch_menu = launch_menu
+
+
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   config.set_environment_variables = {
     prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
@@ -143,22 +182,5 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
       'c:/utils/clink/clink_x64.exe', 'set', 'autosuggest.enable', 'false', '>', 'nul',
   }
 end
-
-
-local launch_menu = {}
-
-if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
-  table.insert(launch_menu, {
-    label = 'Git Bash',
-    args = { 'c:/Program Files/Git/bin/bash.exe', '-i', '-l' },
-  })
-  
-  table.insert(launch_menu, {
-    label = 'PowerShell',
-    args = { 'powershell.exe', '-NoLogo'},
-  })
-end
-
-config.launch_menu = launch_menu
 
 return config
