@@ -11,7 +11,7 @@ config.font = wezterm.font 'Consolas'
 config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
-config.initial_rows = 34
+config.initial_rows = 33
 config.window_decorations = 'RESIZE'
 config.window_padding = { left = 8, top = 8, bottom = 8 }
 
@@ -131,12 +131,15 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
   }
 
-  -- set Unicode coding page 65001
-  -- and inject clink into the command prompt
   config.default_prog = {
     'cmd.exe', '/s', '/k',
+      -- set Unicode coding page 65001
       'chcp', '65001', '>', 'nul', '&&',
+
+      -- and inject clink into the command prompt
       'c:/utils/clink/clink_x64.exe', 'inject', '-q', '&&',
+
+      -- disable history-based autosuggest
       'c:/utils/clink/clink_x64.exe', 'set', 'autosuggest.enable', 'false', '>', 'nul',
   }
 end
