@@ -13,7 +13,10 @@ config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
 config.initial_rows = 33
+-- config.show_close_tab_button_in_tabs = false  -- currently nightly builds only
 config.window_decorations = 'RESIZE'
+config.window_frame = { font_size = 11 }
+
 
 -- Selection of dark themes with acceptable contrast
 --
@@ -34,6 +37,18 @@ config.colors                = { scrollbar_thumb = '#556666' }
 config.window_padding        = { left = 8, right = 16, top = 4, bottom = 4 }  -- right padding is scrollbar width
 
 
+-- Equivalent to POSIX basename(3)
+-- Given "/foo/bar" returns "bar"
+-- Given "c:\\foo\\bar" returns "bar"
+function get_basename(s)
+  return string.gsub(s, '(.*[/\\])(.*)', '%2')
+end
+
+-- https://stackoverflow.com/questions/2235173/what-is-the-naming-standard-for-path-components
+function get_rootname(s)
+  return s:match("([^/\\]+)%.exe$") or s:match("([^/\\]+)$")
+end
+
 get_process_name = function(pane)
   name = pane:get_foreground_process_name()
 
@@ -42,7 +57,7 @@ get_process_name = function(pane)
     return nil
   end
   
-  return name:match("([^/\\]+)%.exe$") or name:match("([^/\\]+)$")
+  return get_rootname(name)
 end
 
 ----------------------------------------------------------------------------------
@@ -108,7 +123,7 @@ end
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
 action_home = function(window, pane)
   process_name = get_process_name(pane)
-
+  
   if is_shell(pane) then
     window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
   else
@@ -230,48 +245,106 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     label = 'PowerShell',
     args = { 'powershell.exe', '-NoLogo'},
   })
+
+  table.insert(launch_menu, {
+    label = 'MSYS2',
+    args = {
+      'C:/msys64/usr/bin/env.exe',
+        -- 'MSYS=enable_pcon',  -- Enable pseudo console API (ConPTY) for msys - they say without it Ctrl-D does not close the terminal
+        'MSYSTEM=MSYS',
+        '/bin/bash',
+        '--login'
+    },
+  })
 end
 
 config.launch_menu = launch_menu
 
 
 -- Top left & right status bar
-wezterm.on("update-left-status", function(window, pane)
+wezterm.on('update-status', function(window, pane)
   window:set_left_status(wezterm.format({}))
-end);
-wezterm.on("update-right-status", function(window, pane)
-  process_info = pane:get_foreground_process_info()
+end)
 
+wezterm.on('update-right-status', function(window, pane)
+  process_info = pane:get_foreground_process_info();
+  
   -- this case covers lua debug overlay
   if (process_info == nil) then
     return
   end
-
+  
   -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601; 134774 days before UNIX
   -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-  unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400)
-
+  unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
+  
   window:set_right_status(wezterm.format({
---    {Attribute={Underline="Single"}},
---    {Attribute={Italic=true}},
-    {Text='Started: ' .. os.date('%b %d %X', unix_time) .. '      '},
-  }));
-end);
+--    { Attribute={Underline="Single"} },
+--    { Attribute={Italic=true} },
+    { Text = 'Started: ' .. os.date('%b %d %X', unix_time) .. '      ' },
+  }))
+end)
 
 
+-- Format tab title
+icons_names = {
+  bash       = { wezterm.nerdfonts.seti_git,        'bash' },
+  powershell = { wezterm.nerdfonts.seti_powershell, 'Powershell' },
+  python     = { wezterm.nerdfonts.seti_python,     'Python' },
+  cmd        = { wezterm.nerdfonts.cod_terminal,    'Cmd' },
+  julia      = { wezterm.nerdfonts.seti_julia,      'Julia' },
+  wslhost    = { wezterm.nerdfonts.linux_tux,       'WSL' },
+}
+wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
+  pane_info = tab.active_pane
+  process_name = get_rootname(pane_info.foreground_process_name)
+
+  -- this case covers lua debug overlay
+  if (process_name == nil) then
+    return
+  end
+
+  icon_name = icons_names[process_name] or { wezterm.nerdfonts.oct_question, 'Shell' }
+  
+  return wezterm.format({
+    { Foreground = { Color = 'White' } },
+    { Text = icon_name[1] .. ' ' .. icon_name[2] },
+  })
+end)
+
+
+-- Startup window position
+local cache_dir = os.getenv('USERPROFILE')
+local window_size_cache_path = cache_dir .. '/.wezterm.config'
+
+wezterm.on('gui-startup', function(cmd)
+  local window_size_cache_file = io.open(window_size_cache_path, 'r')
+  if window_size_cache_file == nil then
+    x = 200
+    y = 32
+  else
+    _, _, x, y = string.find(window_size_cache_file:read(), 'x,y=(%d+),(%d+)')
+    window_size_cache_file:close()
+  end
+  
+  wezterm.mux.spawn_window(cmd or { position = { x = x, y = y } })
+end)
+
+
+-- Default program
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   config.set_environment_variables = {
     prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
   }
-
+  
   config.default_prog = {
     'cmd.exe', '/s', '/k',
       -- set Unicode coding page 65001
       'chcp', '65001', '>', 'nul', '&&',
-
+      
       -- and inject clink into the command prompt
       'c:/utils/clink/clink_x64.exe', 'inject', '-q', '&&',
-
+      
       -- disable history-based autosuggest
       'c:/utils/clink/clink_x64.exe', 'set', 'autosuggest.enable', 'false', '>', 'nul',
   }
