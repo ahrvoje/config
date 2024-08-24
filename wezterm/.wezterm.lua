@@ -13,7 +13,7 @@ config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
 config.initial_rows = 33
--- config.show_close_tab_button_in_tabs = false  -- currently nightly builds only
+config.show_close_tab_button_in_tabs = false
 config.window_decorations = 'RESIZE'
 config.window_frame = { font_size = 11 }
 
@@ -296,18 +296,23 @@ icons_names = {
   wslhost    = { wezterm.nerdfonts.linux_tux,       'WSL' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
-  pane_info = tab.active_pane
-  process_name = get_rootname(pane_info.foreground_process_name)
-
+  process_name = get_rootname(tab.active_pane.foreground_process_name)
   -- this case covers lua debug overlay
   if (process_name == nil) then
     return
   end
-
+  
   icon_name = icons_names[process_name] or { wezterm.nerdfonts.oct_question, 'Shell' }
   
+  pane = wezterm.mux.get_pane(tab.active_pane.pane_id)
+  if not is_shell(pane) then
+    color = 'rgb(255, 100, 100)'
+  else
+    color = 'White'
+  end
+  
   return wezterm.format({
-    { Foreground = { Color = 'White' } },
+    { Foreground = { Color = color } },
     { Text = icon_name[1] .. ' ' .. icon_name[2] },
   })
 end)
