@@ -13,9 +13,10 @@ config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
 config.initial_rows = 33
+config.leader = { key = 'a', mods = 'CTRL', timeout_milliseconds = 9999 }
 config.show_close_tab_button_in_tabs = false
 config.window_decorations = 'RESIZE'
-config.window_frame = { font_size = 11 }
+config.window_frame = { font_size = 12 }
 
 
 -- Selection of dark themes with acceptable contrast
@@ -187,6 +188,9 @@ config.keys = {
   { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
   { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
   { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
+  --
+  { key = 'j',          mods = 'LEADER',     action = act.SendString 'c:/Julia-1.10.4/bin/julia.exe' },
+  { key = 'p',          mods = 'LEADER',     action = act.SendString 'c:/python312_64/python.exe' },
 }
 
 config.key_tables = {
@@ -267,18 +271,26 @@ wezterm.on('update-status', function(window, pane)
 end)
 
 wezterm.on('update-right-status', function(window, pane)
+  if window:leader_is_active() then
+    leader = wezterm.nerdfonts.md_lightning_bolt
+  else
+    leader = ''
+  end
+
   process_info = pane:get_foreground_process_info();
-  
   -- this case covers lua debug overlay
   if (process_info == nil) then
     return
   end
   
-  -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601; 134774 days before UNIX
+  -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
   -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
   unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
   
   window:set_right_status(wezterm.format({
+    { Foreground = { Color = 'rgb(255, 100, 100)' } },
+    { Text = leader .. ' ' },
+    { Foreground = { Color = 'White' } },
 --    { Attribute={Underline="Single"} },
 --    { Attribute={Italic=true} },
     { Text = 'Started: ' .. os.date('%b %d %X', unix_time) .. '      ' },
