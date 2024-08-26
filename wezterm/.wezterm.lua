@@ -54,7 +54,7 @@ get_process_name = function(pane)
   name = pane:get_foreground_process_name()
   
   -- this case covers lua debug overlay
-  if (name == nil) then
+  if name == nil then
     return nil
   end
   
@@ -74,24 +74,24 @@ is_shell = function(pane)
   process_name = get_process_name(pane)
   
   -- this case covers lua debug overlay
-  if (process_name == nil) then
+  if process_name == nil then
     return true
   end
   
-  if (shells[process_name] ~= nil) then
+  if shells[process_name] ~= nil then
     return true
   end
   
   process_info = pane:get_foreground_process_info()
   
-  if ((process_name == 'python') and (#(process_info.argv) == 1)) then
+  if (process_name == 'python') and (#(process_info.argv) == 1) then
     return true
   end
-  if ((process_name == 'python') and (#(process_info.argv) == 2) and (process_info.argv[2]:match('ptpython'))) then
+  if (process_name == 'python') and (#(process_info.argv) == 2) and (process_info.argv[2]:match('ptpython')) then
     return true
   end
   
-  if ((process_name == 'julia') and (#(process_info.argv) == 1)) then
+  if (process_name == 'julia') and (#(process_info.argv) == 1) then
     return true
   end
   
@@ -99,9 +99,11 @@ is_shell = function(pane)
 end
 
 ----------------------------------------------------------------------------------
--- 'Ctrl-d' close shell, taking care of special cases like PowerShell
-action_close_shell = function(window, pane)
-  if get_process_name(pane) == 'powershell' then
+-- 'Ctrl-d' close shell, taking care of special cases like PowerShell, Python...
+action_exit_shell = function(window, pane)
+  if get_process_name(pane) == 'python' and is_shell(pane) then
+    window:perform_action(act.SendString 'exit()\r', pane)
+  elseif get_process_name(pane) == 'powershell' then
     window:perform_action(act.SendString 'exit\r', pane)
   else
     window:perform_action(act.SendKey { key='d', mods='CTRL' }, pane)
@@ -114,7 +116,7 @@ end
 --   Copy to clipboard if selection is available
 action_ctrl_c = function(window, pane)
   local sel = window:get_selection_text_for_pane(pane)
-  if (not sel or sel == '') then
+  if not sel or sel == '' then
     window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
   else
     window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
@@ -157,7 +159,7 @@ action_down = function(window, pane)
 end
 
 config.keys = {
-  { key = 'd',          mods = 'CTRL',       action = wezterm.action_callback( action_close_shell ) },
+  { key = 'd',          mods = 'CTRL',       action = wezterm.action_callback( action_exit_shell ) },
   { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
   { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
   { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(1) },
@@ -303,7 +305,7 @@ wezterm.on('update-right-status', function(window, pane)
   
   process_info = pane:get_foreground_process_info();
   -- this case covers lua debug overlay
-  if (process_info == nil) then
+  if process_info == nil then
     return
   end
   
@@ -334,7 +336,7 @@ icons_names = {
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   process_name = get_rootname(tab.active_pane.foreground_process_name)
   -- this case covers lua debug overlay
-  if (process_name == nil) then
+  if process_name == nil then
     return
   end
   
