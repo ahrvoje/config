@@ -99,7 +99,17 @@ is_shell = function(pane)
 end
 
 ----------------------------------------------------------------------------------
--- 'Ctrl+c' key has a double role:
+-- 'Ctrl-d' close shell, taking care of special cases like PowerShell
+action_close_shell = function(window, pane)
+  if get_process_name(pane) == 'powershell' then
+    window:perform_action(act.SendString 'exit\r', pane)
+  else
+    window:perform_action(act.SendKey { key='d', mods='CTRL' }, pane)
+  end
+end
+
+----------------------------------------------------------------------------------
+-- 'Ctrl-c' key has a double role:
 --   KeyboardInterrupt if there is no selection
 --   Copy to clipboard if selection is available
 action_ctrl_c = function(window, pane)
@@ -149,6 +159,7 @@ action_down = function(window, pane)
 end
 
 config.keys = {
+  { key = 'd',          mods = 'CTRL',       action = wezterm.action_callback( action_close_shell ) },
   { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
   { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
   { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(1) },
@@ -188,9 +199,11 @@ config.keys = {
   { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
   { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
   { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
-  --
+  -- LEADER actions
+  { key = 'a',          mods = 'LEADER',     action = act.SendString 'c:/Python312-64/python.exe "c:/Users/u14e48/OneDrive - AVL List GmbH/AVL_AddressBook/src/address_book_main.py"' },
+  { key = 'o',          mods = 'LEADER',     action = act.SendString 'c:/utils/lsd/lsd.exe -l "c:/Users/u14e48/AppData/Local/Microsoft/Outlook/Offline Address Books/ef1c1fc4-9c01-46f1-a73e-7fc0639bf8e3/"\r' },
   { key = 'j',          mods = 'LEADER',     action = act.SendString 'c:/Julia-1.10.4/bin/julia.exe' },
-  { key = 'p',          mods = 'LEADER',     action = act.SendString 'c:/python312_64/python.exe' },
+  { key = 'p',          mods = 'LEADER',     action = act.SendString 'c:/python312-64/python.exe' },
 }
 
 config.key_tables = {
@@ -233,6 +246,19 @@ config.key_tables = {
       { CopyMode = 'ClearPattern' },
       { CopyMode = 'Close' } },
     },
+  },
+}
+
+config.mouse_bindings = {
+  {
+    event = { Down = { streak = 1, button = { WheelUp = 1 } } },
+    mods = 'CTRL',
+    action = act.ScrollByLine(-1),
+  },
+  {
+    event = { Down = { streak = 1, button = { WheelDown = 1 } } },
+    mods = 'CTRL',
+    action = act.ScrollByLine(1),
   },
 }
 
