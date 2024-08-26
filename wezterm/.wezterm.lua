@@ -52,7 +52,7 @@ end
 
 get_process_name = function(pane)
   name = pane:get_foreground_process_name()
-
+  
   -- this case covers lua debug overlay
   if (name == nil) then
     return nil
@@ -77,7 +77,7 @@ is_shell = function(pane)
   if (process_name == nil) then
     return true
   end
-
+  
   if (shells[process_name] ~= nil) then
     return true
   end
@@ -133,8 +133,6 @@ end
 --   Default line-start/history-up/history-down if shell is active
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
 action_home = function(window, pane)
-  process_name = get_process_name(pane)
-  
   if is_shell(pane) then
     window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
   else
@@ -275,7 +273,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     label = 'PowerShell',
     args = { 'powershell.exe', '-NoLogo'},
   })
-
+  
   table.insert(launch_menu, {
     label = 'MSYS2',
     args = {
@@ -302,7 +300,7 @@ wezterm.on('update-right-status', function(window, pane)
   else
     leader = ''
   end
-
+  
   process_info = pane:get_foreground_process_info();
   -- this case covers lua debug overlay
   if (process_info == nil) then
