@@ -3,6 +3,28 @@ local act = wezterm.action
 
 local config = wezterm.config_builder()
 
+----------------------------------------------------------------------------------
+-- Load local configuration from .wezterm.toml. Can contain initial window
+-- position and local key actions, e.g.:
+-- 
+-- Keys = [
+--     ["p", "LEADER", "c:/Python312_64/python.exe"],
+-- ]
+-- 
+-- [Window]
+-- x = 450
+-- y = 200
+-- 
+
+local local_config_file = os.getenv('USERPROFILE') .. '/.wezterm.toml'
+local local_config = {}
+
+f = io.open(local_config_file, 'r')
+if f ~= nil then
+  local_config = wezterm.serde.toml_decode(f:read('*all')) or local_config
+  f:close()
+end
+----------------------------------------------------------------------------------
 
 config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
@@ -131,6 +153,12 @@ action_log_process = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
+-- 'Ctrl+Shift+C' log local TOML configuration file .wezterm.toml
+action_log_config = function(window, pane)
+  wezterm.log_info(local_config)
+end
+
+----------------------------------------------------------------------------------
 -- 'Home'/'Up'/'Down' keys have a double role
 --   Default line-start/history-up/history-down if shell is active
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
@@ -159,6 +187,7 @@ action_down = function(window, pane)
 end
 
 config.keys = {
+  { key = 'r',          mods = 'CTRL|SHIFT', action = act.ReloadConfiguration },
   { key = 'd',          mods = 'CTRL',       action = wezterm.action_callback( action_exit_shell ) },
   { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
   { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
@@ -189,6 +218,7 @@ config.keys = {
   { key = 'Enter',      mods = 'CTRL',       action = act.ShowTabNavigator },
   { key = 'l',          mods = 'CTRL',       action = act.ShowDebugOverlay },
   { key = 'L',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
+  { key = 'C',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_config ) },
   { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
   { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
   { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
@@ -203,12 +233,19 @@ config.keys = {
   { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
   { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
   { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
-  -- LEADER actions
-  { key = 'a',          mods = 'LEADER',     action = act.SendString 'c:/Python312-64/python.exe "c:/Users/u14e48/OneDrive - AVL List GmbH/AVL_AddressBook/src/address_book_main.py"' },
-  { key = 'o',          mods = 'LEADER',     action = act.SendString 'c:/utils/lsd/lsd.exe -l "c:/Users/u14e48/AppData/Local/Microsoft/Outlook/Offline Address Books/ef1c1fc4-9c01-46f1-a73e-7fc0639bf8e3/"\r' },
-  { key = 'j',          mods = 'LEADER',     action = act.SendString 'c:/Julia-1.10.4/bin/julia.exe' },
-  { key = 'p',          mods = 'LEADER',     action = act.SendString 'c:/python312-64/python.exe' },
 }
+
+-- Local key actions loaded from local configuration
+if local_config['Keys'] ~= nil then
+  for i = 1, #local_config['Keys'] do
+    key_mod_string = local_config['Keys'][i]
+    table.insert(config.keys, {
+      key = key_mod_string[1],
+      mods = key_mod_string[2],
+      action = act.SendString ( key_mod_string[3] )
+    })
+  end
+end
 
 config.key_tables = {
   copy_mode = {
@@ -360,18 +397,16 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
 end)
 
 
--- Startup window position
-local cache_dir = os.getenv('USERPROFILE')
-local window_size_cache_path = cache_dir .. '/.wezterm.config'
-
+-- Startup window position is loaded from local configuration
 wezterm.on('gui-startup', function(cmd)
-  local window_size_cache_file = io.open(window_size_cache_path, 'r')
-  if window_size_cache_file == nil then
+  if local_config['Window'] ~= nil then
+    x = local_config['Window']['x']
+    y = local_config['Window']['y']
+  end
+
+  if x == nil or y == nil then
     x = 200
     y = 32
-  else
-    _, _, x, y = string.find(window_size_cache_file:read(), 'x,y=(%d+),(%d+)')
-    window_size_cache_file:close()
   end
   
   wezterm.mux.spawn_window(cmd or { position = { x = x, y = y } })
