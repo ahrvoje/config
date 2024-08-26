@@ -8,7 +8,7 @@ local config = wezterm.config_builder()
 -- position and local key actions, e.g.:
 -- 
 -- Keys = [
---     ["p", "LEADER", "c:/Python312_64/python.exe"],
+--     {"key" = "p", "mods" = "LEADER", "string" = "c:/Python312_64/python.exe"},
 -- ]
 -- 
 -- [Window]
@@ -235,14 +235,14 @@ config.keys = {
   { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
 }
 
--- Local key actions loaded from local configuration
+-- Local key actions macros loaded from local configuration
 if local_config['Keys'] ~= nil then
   for i = 1, #local_config['Keys'] do
-    key_mod_string = local_config['Keys'][i]
+    key_mods_string = local_config['Keys'][i]
     table.insert(config.keys, {
-      key = key_mod_string[1],
-      mods = key_mod_string[2],
-      action = act.SendString ( key_mod_string[3] )
+      key = key_mods_string['key'],
+      mods = key_mods_string['mods'],
+      action = act.SendString ( key_mods_string['string'] )
     })
   end
 end
