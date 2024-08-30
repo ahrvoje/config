@@ -5,7 +5,7 @@ local config = wezterm.config_builder()
 
 ----------------------------------------------------------------------------------
 -- Load local configuration from .wezterm.toml. Can contain initial window
--- position and local key actions, e.g.:
+-- position and local key binded strings, e.g.:
 -- 
 -- Keys = [
 --     {"key" = "p", "mods" = "LEADER", "string" = "c:/Python312_64/python.exe"},
@@ -75,7 +75,7 @@ end
 get_process_name = function(pane)
   name = pane:get_foreground_process_name()
   
-  -- this case covers lua debug overlay
+  -- this case covers lua debug overlay and TabNavigator
   if name == nil then
     return nil
   end
@@ -90,42 +90,45 @@ end
 --   https://wezfurlong.org/wezterm/config/lua/config/skip_close_confirmation_for_processes_named.html
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
-is_shell = function(pane)
-  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6 }
+get_shell = function(pane)
+  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7 }
   
   process_name = get_process_name(pane)
   
-  -- this case covers lua debug overlay
+  -- this case covers lua debug overlay and TabNavigator
   if process_name == nil then
-    return true
+    return process_name
   end
   
   if shells[process_name] ~= nil then
-    return true
+    return process_name
   end
   
   process_info = pane:get_foreground_process_info()
   
   if (process_name == 'python') and (#(process_info.argv) == 1) then
-    return true
+    return 'python'
   end
+
   if (process_name == 'python') and (#(process_info.argv) == 2) and (process_info.argv[2]:match('ptpython')) then
-    return true
+    return 'ptpython'
   end
   
   if (process_name == 'julia') and (#(process_info.argv) == 1) then
-    return true
+    return 'julia'
   end
   
-  return false
+  return ''
 end
 
 ----------------------------------------------------------------------------------
 -- 'Ctrl-d' close shell, taking care of special cases like PowerShell, Python...
 action_exit_shell = function(window, pane)
-  if get_process_name(pane) == 'python' and is_shell(pane) then
+  if get_shell(pane) == 'python' then
     window:perform_action(act.SendString 'exit()\r', pane)
-  elseif get_process_name(pane) == 'powershell' then
+  elseif get_shell(pane) == 'ptpython' then
+    window:perform_action(act.SendString 'exit()\n', pane)
+  elseif get_shell(pane) == 'powershell' then
     window:perform_action(act.SendString 'exit\r', pane)
   else
     window:perform_action(act.SendKey { key='d', mods='CTRL' }, pane)
@@ -133,7 +136,7 @@ action_exit_shell = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
--- 'Ctrl-c' key has a double role:
+-- 'Ctrl-c' key has two roles:
 --   KeyboardInterrupt if there is no selection
 --   Copy to clipboard if selection is available
 action_ctrl_c = function(window, pane)
@@ -159,11 +162,12 @@ action_log_config = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
--- 'Home'/'Up'/'Down' keys have a double role
+-- 'Home'/'Up'/'Down' keys have two roles
 --   Default line-start/history-up/history-down if shell is active
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
 action_home = function(window, pane)
-  if is_shell(pane) then
+  shell = get_shell(pane)
+  if shell == nil or shell ~= '' then
     window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollToTop, pane)
@@ -171,7 +175,8 @@ action_home = function(window, pane)
 end
 
 action_up = function(window, pane)
-  if is_shell(pane) then
+  shell = get_shell(pane)
+  if shell == nil or shell ~= '' then
     window:perform_action(act.SendKey{ key='UpArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(-1), pane)
@@ -179,10 +184,25 @@ action_up = function(window, pane)
 end
 
 action_down = function(window, pane)
-  if is_shell(pane) then
+  shell = get_shell(pane)
+  if shell == nil or shell ~= '' then
     window:perform_action(act.SendKey{ key='DownArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(1), pane)
+  end
+end
+
+----------------------------------------------------------------------------------
+-- Clear screen
+action_clear_screen = function(window, pane)
+  shell = get_shell(pane)
+
+  if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' then
+    window:perform_action(act.SendString ( 'cls\r' ), pane)
+  end
+
+  if shell == 'bash' or shell == 'wslhost' then
+    window:perform_action(act.SendString ( 'printf \'\\033c\\e[3J\'\r' ), pane)
   end
 end
 
@@ -233,9 +253,10 @@ config.keys = {
   { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
   { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
   { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
+  { key = 'Enter',      mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
 }
 
--- Local key actions macros loaded from local configuration
+-- Local key macros loaded from local configuration
 if local_config['Keys'] ~= nil then
   for i = 1, #local_config['Keys'] do
     key_mods_string = local_config['Keys'][i]
@@ -345,7 +366,8 @@ wezterm.on('update-right-status', function(window, pane)
   end
   
   process_info = pane:get_foreground_process_info();
-  -- this case covers lua debug overlay
+
+  -- this case covers lua debug overlay and TabNavigator
   if process_info == nil then
     return
   end
@@ -376,7 +398,8 @@ icons_names = {
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   process_name = get_rootname(tab.active_pane.foreground_process_name)
-  -- this case covers lua debug overlay
+
+  -- this case covers lua debug overlay and TabNavigator
   if process_name == nil then
     return
   end
@@ -384,7 +407,7 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   icon_name = icons_names[process_name] or { wezterm.nerdfonts.oct_question, 'Shell' }
   
   pane = wezterm.mux.get_pane(tab.active_pane.pane_id)
-  if not is_shell(pane) then
+  if get_shell(pane) == '' then
     color = 'rgb(255, 100, 100)'
   else
     color = 'White'
@@ -403,7 +426,7 @@ wezterm.on('gui-startup', function(cmd)
     x = local_config['Window']['x']
     y = local_config['Window']['y']
   end
-
+  
   if x == nil or y == nil then
     x = 200
     y = 32
