@@ -91,7 +91,7 @@ end
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
 get_shell = function(pane)
-  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7 }
+  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8 }
   
   process_name = get_process_name(pane)
   
@@ -197,7 +197,7 @@ end
 action_clear_screen = function(window, pane)
   shell = get_shell(pane)
 
-  if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' then
+  if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' or shell == 'nu' then
     window:perform_action(act.SendString ( 'cls\r' ), pane)
   end
 
@@ -348,6 +348,11 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
         '--login'
     },
   })
+  
+  table.insert(launch_menu, {
+    label = 'Nu',
+    args = { 'c:/utils/nu/nu.exe', ''},
+  })
 end
 
 config.launch_menu = launch_menu
@@ -389,12 +394,13 @@ end)
 
 -- Format tab title
 icons_names = {
-  bash       = { wezterm.nerdfonts.seti_git,        'bash' },
-  powershell = { wezterm.nerdfonts.seti_powershell, 'Powershell' },
-  python     = { wezterm.nerdfonts.seti_python,     'Python' },
-  cmd        = { wezterm.nerdfonts.cod_terminal,    'Cmd' },
-  julia      = { wezterm.nerdfonts.seti_julia,      'Julia' },
-  wslhost    = { wezterm.nerdfonts.linux_tux,       'WSL' },
+  bash       = { wezterm.nerdfonts.seti_git,         'bash' },
+  powershell = { wezterm.nerdfonts.seti_powershell,  'Powershell' },
+  python     = { wezterm.nerdfonts.seti_python,      'Python' },
+  cmd        = { wezterm.nerdfonts.cod_terminal,     'Cmd' },
+  julia      = { wezterm.nerdfonts.seti_julia,       'Julia' },
+  wslhost    = { wezterm.nerdfonts.linux_tux,        'WSL' },
+  nu         = { wezterm.nerdfonts.md_chevron_right, 'Nu' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   process_name = get_rootname(tab.active_pane.foreground_process_name)
