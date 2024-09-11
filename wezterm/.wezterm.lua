@@ -130,6 +130,8 @@ action_exit_shell = function(window, pane)
     window:perform_action(act.SendString 'exit()\n', pane)
   elseif get_shell(pane) == 'powershell' then
     window:perform_action(act.SendString 'exit\r', pane)
+  elseif get_shell(pane) == 'cmd' then
+    window:perform_action(act.SendString 'exit\r', pane)
   else
     window:perform_action(act.SendKey { key='d', mods='CTRL' }, pane)
   end
@@ -342,7 +344,6 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
     label = 'MSYS2',
     args = {
       'C:/msys64/usr/bin/env.exe',
-        -- 'MSYS=enable_pcon',  -- Enable pseudo console API (ConPTY) for msys - they say without it Ctrl-D does not close the terminal
         'MSYSTEM=MSYS',
         '/bin/bash',
         '--login'
