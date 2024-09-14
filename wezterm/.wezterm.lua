@@ -122,6 +122,19 @@ get_shell = function(pane)
 end
 
 ----------------------------------------------------------------------------------
+-- 'Ctrl-c' key has two roles:
+--   KeyboardInterrupt if there is no selection
+--   Copy to clipboard if selection is available
+action_ctrl_c = function(window, pane)
+  local sel = window:get_selection_text_for_pane(pane)
+  if not sel or sel == '' then
+    window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
+  else
+    window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
+  end
+end
+
+----------------------------------------------------------------------------------
 -- 'Ctrl-d' close shell, taking care of special cases like PowerShell, Python...
 action_exit_shell = function(window, pane)
   if get_shell(pane) == 'python' then
@@ -134,19 +147,6 @@ action_exit_shell = function(window, pane)
     window:perform_action(act.SendString 'exit\r', pane)
   else
     window:perform_action(act.SendKey { key='d', mods='CTRL' }, pane)
-  end
-end
-
-----------------------------------------------------------------------------------
--- 'Ctrl-c' key has two roles:
---   KeyboardInterrupt if there is no selection
---   Copy to clipboard if selection is available
-action_ctrl_c = function(window, pane)
-  local sel = window:get_selection_text_for_pane(pane)
-  if not sel or sel == '' then
-    window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
-  else
-    window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
   end
 end
 
@@ -195,7 +195,7 @@ action_down = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
--- Clear screen
+-- 'LEADER + Enter' - Clear screen action
 action_clear_screen = function(window, pane)
   shell = get_shell(pane)
 
@@ -206,6 +206,13 @@ action_clear_screen = function(window, pane)
   if shell == 'bash' or shell == 'wslhost' then
     window:perform_action(act.SendString ( 'printf \'\\033c\\e[3J\'\r' ), pane)
   end
+end
+
+----------------------------------------------------------------------------------
+-- 'LEADER + k' - Kill Process action
+action_kill_process = function(window, pane)
+  process_info = pane:get_foreground_process_info()
+  os.execute('tskill ' .. process_info.pid)
 end
 
 config.keys = {
@@ -244,7 +251,7 @@ config.keys = {
   { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
   { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
   { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
-  { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c )},
+  { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c ) },
   { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
   { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
   { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
@@ -256,6 +263,7 @@ config.keys = {
   { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
   { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
   { key = 'Enter',      mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
+  { key = 'k',          mods = 'LEADER',     action = wezterm.action_callback( action_kill_process ) },
 }
 
 -- Local key macros loaded from local configuration
