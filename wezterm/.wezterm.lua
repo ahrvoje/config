@@ -91,7 +91,7 @@ end
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
 get_shell = function(pane)
-  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8 }
+  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8, nvim = 9 }
   
   process_name = get_process_name(pane)
   
@@ -212,7 +212,14 @@ end
 -- 'LEADER + k' - Kill Process action
 action_kill_process = function(window, pane)
   process_info = pane:get_foreground_process_info()
-  os.execute('tskill ' .. process_info.pid)
+
+  if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
+    if os.getenv('WSL_DISTRO_NAME') == nil then
+      os.execute('tskill ' .. process_info.pid)
+    else
+      os.execute('kill -9 ' .. process_info.pid)
+    end
+  end
 end
 
 config.keys = {
@@ -339,6 +346,11 @@ local launch_menu = {}
 
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   table.insert(launch_menu, {
+    label = 'Neovim',
+    args = { 'c:/Program Files/Neovim/bin/nvim.exe' },
+  })
+
+  table.insert(launch_menu, {
     label = 'Git Bash',
     args = { 'c:/Program Files/Git/bin/bash.exe', '-i', '-l' },
   })
@@ -403,6 +415,7 @@ end)
 
 -- Format tab title
 icons_names = {
+  nvim       = { wezterm.nerdfonts.custom_neovim,    'Neovim' },
   bash       = { wezterm.nerdfonts.seti_git,         'bash' },
   powershell = { wezterm.nerdfonts.seti_powershell,  'Powershell' },
   python     = { wezterm.nerdfonts.seti_python,      'Python' },
