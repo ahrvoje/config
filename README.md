@@ -13,6 +13,8 @@ Total Commander setup with the color scheme and various settings for the efficie
 ![WezTerm screenshot](/wezterm/wezterm_screen.png)
 
 # Clink
+
+default_inputrc:
 ```
 # Completion commands
 # https://chrisant996.github.io/clink/clink.html#completion-commands
@@ -24,4 +26,11 @@ Total Commander setup with the color scheme and various settings for the efficie
 "\e[Z":     menu-complete-backward  # Shift-Tab
 #           old-menu-complete
 #           delete-char-or-list
+```
+
+clink_settings:
+```
+# name: Enable automatic suggestions
+# type: boolean
+autosuggest.enable = False
 ```

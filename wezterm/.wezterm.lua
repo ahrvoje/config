@@ -477,9 +477,6 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
       
       -- and inject clink into the command prompt
       'c:/utils/clink/clink_x64.exe', 'inject', '-q', '&&',
-      
-      -- disable history-based autosuggest
-      'c:/utils/clink/clink_x64.exe', 'set', 'autosuggest.enable', 'false', '>', 'nul',
   }
 end
 
