@@ -476,7 +476,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
       'chcp', '65001', '>', 'nul', '&&',
       
       -- and inject clink into the command prompt
-      'c:/utils/clink/clink_x64.exe', 'inject', '-q', '&&',
+      'c:/utils/clink/clink_x64.exe', 'inject', '-q'
   }
 end
 
