@@ -34,7 +34,7 @@ config.font = wezterm.font 'Consolas'
 config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
-config.initial_rows = 33
+config.initial_rows = 36
 config.leader = { key = 'a', mods = 'CTRL', timeout_milliseconds = 9999 }
 config.show_close_tab_button_in_tabs = false
 config.window_decorations = 'RESIZE'
@@ -385,6 +385,12 @@ wezterm.on('update-status', function(window, pane)
 end)
 
 wezterm.on('update-right-status', function(window, pane)
+  if get_shell(pane) == '' then
+    running = wezterm.nerdfonts.md_fire
+  else
+    running = ''
+  end
+  
   if window:leader_is_active() then
     leader = wezterm.nerdfonts.md_lightning_bolt
   else
@@ -403,6 +409,8 @@ wezterm.on('update-right-status', function(window, pane)
   unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
   
   window:set_right_status(wezterm.format({
+    { Foreground = { Color = 'rgb(255, 0, 0)' } },
+    { Text = running },
     { Foreground = { Color = 'rgb(255, 100, 100)' } },
     { Text = leader .. ' ' },
     { Foreground = { Color = 'White' } },
@@ -433,16 +441,8 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   end
   
   icon_name = icons_names[process_name] or { wezterm.nerdfonts.oct_question, 'Shell' }
-  
-  pane = wezterm.mux.get_pane(tab.active_pane.pane_id)
-  if get_shell(pane) == '' then
-    color = 'rgb(255, 100, 100)'
-  else
-    color = 'White'
-  end
-  
+    
   return wezterm.format({
-    { Foreground = { Color = color } },
     { Text = icon_name[1] .. ' ' .. icon_name[2] },
   })
 end)
