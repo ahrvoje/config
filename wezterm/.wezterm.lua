@@ -386,15 +386,15 @@ end)
 
 wezterm.on('update-right-status', function(window, pane)
   if get_shell(pane) == '' then
-    running = wezterm.nerdfonts.md_fire
+    running_color = 'rgb(255, 0, 0)'
   else
-    running = ''
+    running_color = 'rgb(0, 0, 0)'
   end
   
   if window:leader_is_active() then
-    leader = wezterm.nerdfonts.md_lightning_bolt
+    leader_color = 'rgb(255, 100, 100)'
   else
-    leader = ''
+    leader_color = 'rgb(0, 0, 0)'
   end
   
   process_info = pane:get_foreground_process_info();
@@ -409,10 +409,10 @@ wezterm.on('update-right-status', function(window, pane)
   unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
   
   window:set_right_status(wezterm.format({
-    { Foreground = { Color = 'rgb(255, 0, 0)' } },
-    { Text = running },
-    { Foreground = { Color = 'rgb(255, 100, 100)' } },
-    { Text = leader .. ' ' },
+    { Foreground = { Color = running_color } },
+    { Text = wezterm.nerdfonts.md_fire },
+    { Foreground = { Color = leader_color } },
+    { Text = wezterm.nerdfonts.md_lightning_bolt .. ' ' },
     { Foreground = { Color = 'White' } },
 --    { Attribute={Underline="Single"} },
 --    { Attribute={Italic=true} },
