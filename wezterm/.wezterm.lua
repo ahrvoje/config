@@ -396,9 +396,34 @@ wezterm.on('update-right-status', function(window, pane)
   else
     leader_color = 'rgb(0, 0, 0)'
   end
-  
-  process_info = pane:get_foreground_process_info();
 
+  -- Battery
+  ----------
+  battery_info = wezterm:battery_info()
+  if #battery_info == 0 then
+    battery_color = ''
+    battery_icon = ''
+    battery_text = ''
+  else
+    battery_charge = battery_info[1]['state_of_charge']
+    battery_text = math.ceil(100 * battery_charge) .. '%  '
+
+    if battery_charge < 0.25 then
+    battery_color = 'Red'
+    battery_icon = wezterm.nerdfonts.md_battery_20
+    elseif battery_charge < 0.5 then
+    battery_color = 'Yellow'
+    battery_icon = wezterm.nerdfonts.md_battery_50
+    else
+    battery_color = 'Green'
+    battery_icon = wezterm.nerdfonts.md_battery
+    end
+  end
+
+  -- Process start time  
+  ---------------------
+  process_info = pane:get_foreground_process_info();
+  
   -- this case covers lua debug overlay and TabNavigator
   if process_info == nil then
     return
@@ -408,14 +433,16 @@ wezterm.on('update-right-status', function(window, pane)
   -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
   unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
   
+  -- Format top status
+  --------------------
   window:set_right_status(wezterm.format({
     { Foreground = { Color = running_color } },
     { Text = wezterm.nerdfonts.md_fire },
     { Foreground = { Color = leader_color } },
-    { Text = wezterm.nerdfonts.md_lightning_bolt .. ' ' },
-    { Foreground = { Color = 'White' } },
---    { Attribute={Underline="Single"} },
---    { Attribute={Italic=true} },
+    { Text = wezterm.nerdfonts.md_lightning_bolt .. '  ' },
+    { Foreground = { Color = battery_color } },
+    { Text = battery_icon .. battery_text .. '' },
+    { Foreground = { Color = 'Gray' } },
     { Text = 'Started: ' .. os.date('%b %d %X', unix_time) .. '      ' },
   }))
 end)
@@ -434,14 +461,14 @@ icons_names = {
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   process_name = get_rootname(tab.active_pane.foreground_process_name)
-
+  
   -- this case covers lua debug overlay and TabNavigator
   if process_name == nil then
     return
   end
   
   icon_name = icons_names[process_name] or { wezterm.nerdfonts.oct_question, 'Shell' }
-    
+  
   return wezterm.format({
     { Text = icon_name[1] .. ' ' .. icon_name[2] },
   })
@@ -476,7 +503,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
       'chcp', '65001', '>', 'nul', '&&',
       
       -- and inject clink into the command prompt
-      'c:/utils/clink/clink_x64.exe', 'inject', '-q'
+      'c:/Users/u14e48/Programs/utils/clink/clink_x64.exe', 'inject', '-q'
   }
 end
 
