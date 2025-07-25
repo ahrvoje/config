@@ -347,7 +347,7 @@ local launch_menu = {}
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   table.insert(launch_menu, {
     label = 'Neovim',
-    args = { 'c:/Program Files/Neovim/bin/nvim.exe' },
+    args = { 'nvim.bat' },
   })
 
   table.insert(launch_menu, {
@@ -372,7 +372,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
   
   table.insert(launch_menu, {
     label = 'Nu',
-    args = { 'c:/utils/nu/nu.exe', ''},
+    args = { 'nu.bat' },
   })
 end
 
@@ -503,7 +503,7 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
       'chcp', '65001', '>', 'nul', '&&',
       
       -- and inject clink into the command prompt
-      'c:/Users/u14e48/Programs/utils/clink/clink_x64.exe', 'inject', '-q'
+      'clink', 'inject', '-q'
   }
 end
 
