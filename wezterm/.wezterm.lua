@@ -250,31 +250,31 @@ config.keys = {
     { key = 'd',          mods = 'CTRL',     action = wezterm.action_callback( action_exit_shell ) },
 
     -- use key mapping to perform KeyTable actions
-    { key = 'C', mods = 'LEADER',
+    { key = '0', mods = 'CTRL|ALT',
       action = act.Multiple {
         act.ClearKeyTableStack,
         wezterm.action_callback( clear_key_icons_stack ),
       }
     },
-    { key = 'P', mods = 'LEADER',
+    { key = '-', mods = 'CTRL|ALT',
       action = act.Multiple { 
         act.PopKeyTable,
         wezterm.action_callback( pop_key_icons_stack ),
       }
     },
-    { key = 'T', mods = 'LEADER',
+    { key = '9', mods = 'CTRL|ALT',
       action = act.Multiple { 
         act.ActivateKeyTable({ name = "term", one_shot = false }),
         wezterm.action_callback( add_term_key_icon )
       }
     },
-    { key = 'V', mods = 'LEADER',
+    { key = '8', mods = 'CTRL|ALT',
       action = act.Multiple { 
         act.ActivateKeyTable({ name = "nvim", one_shot = false }),
         wezterm.action_callback( add_nvim_key_icon )
       }
     },
-    { key = 'R', mods = 'LEADER',
+    { key = '7', mods = 'CTRL|ALT',
       action = act.Multiple { 
         act.ActivateKeyTable({ name = "resize", one_shot = false }),
         wezterm.action_callback( add_resize_key_icon )
@@ -316,7 +316,7 @@ config.key_tables = {
     { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
     { key = 'Enter',      mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
   },
-    
+  
   resize = {
     { key = 'LeftArrow',  mods = '',  action = act.AdjustPaneSize { 'Left', 1 } },
     { key = 'RightArrow', mods = '',  action = act.AdjustPaneSize { 'Right', 1 } },
