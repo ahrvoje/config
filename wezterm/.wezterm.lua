@@ -3,39 +3,26 @@ local act = wezterm.action
 
 local config = wezterm.config_builder()
 
-----------------------------------------------------------------------------------
--- Load local configuration from .wezterm.toml. Can contain initial window
--- position and local key binded strings, e.g.:
--- 
--- Keys = [
---     {"key" = "p", "mods" = "LEADER", "string" = "c:/Python312_64/python.exe"},
--- ]
--- 
--- [Window]
--- x = 450
--- y = 200
--- 
-
-local local_config_file = os.getenv('USERPROFILE') .. '/.wezterm.toml'
-local local_config = {}
-
-f = io.open(local_config_file, 'r')
-if f ~= nil then
-  local_config = wezterm.serde.toml_decode(f:read('*all')) or local_config
-  f:close()
+-- load local configuration if available --------
+local function prequire(m) 
+  local ok, err = pcall(require, m) 
+  if not ok then return nil, err end
+  return err
 end
-----------------------------------------------------------------------------------
+
+local local_config = prequire 'local_config'
+-------------------------------------------------
 
 config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
 config.check_for_updates = false
-config.disable_default_key_bindings = true
+--config.disable_default_key_bindings = true
 config.font = wezterm.font 'Consolas'
 config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
 config.initial_rows = 36
-config.leader = { key = 'a', mods = 'CTRL', timeout_milliseconds = 9999 }
+config.leader = { key = '`', mods = 'ALT', timeout_milliseconds = 9999 }
 config.show_close_tab_button_in_tabs = false
 config.window_decorations = 'RESIZE'
 config.window_frame = { font_size = 12 }
@@ -73,6 +60,10 @@ function get_rootname(s)
 end
 
 get_process_name = function(pane)
+  if pane == nil then
+    return nil
+  end
+
   name = pane:get_foreground_process_name()
   
   -- this case covers lua debug overlay and TabNavigator
@@ -222,111 +213,120 @@ action_kill_process = function(window, pane)
   end
 end
 
+----------------------------------------------------------------------------------
+-- key tables stack icons - clear, add, pop
+key_icons = ''
+clear_key_icons_stack = function(window, pane)
+  key_icons = ''
+end
+
+pop_key_icons_stack = function(window, pane)
+  -- unicode icon char size is 3, and there is one space char, so start from char 5 = 3 + 1 + 1
+  key_icons = key_icons:sub(3 + 1 + 1, #key_icons)
+end
+
+add_term_key_icon = function(window, pane)
+  key_icons = wezterm.nerdfonts.cod_terminal .. ' ' .. key_icons
+end
+
+add_nvim_key_icon = function(window, pane)
+  key_icons = wezterm.nerdfonts.custom_neovim .. ' ' .. key_icons
+end
+
+add_resize_key_icon = function(window, pane)
+  key_icons = wezterm.nerdfonts.fa_arrows .. ' ' .. key_icons
+end
+
+----------------------------------------------------------------------------------
 config.keys = {
-  { key = 'r',          mods = 'CTRL|SHIFT', action = act.ReloadConfiguration },
-  { key = 'd',          mods = 'CTRL',       action = wezterm.action_callback( action_exit_shell ) },
-  { key = 't',          mods = 'CTRL',       action = act.SpawnTab 'CurrentPaneDomain' },
-  { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
-  { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(1) },
-  { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
-  { key = 'LeftArrow',  mods = 'CTRL',       action = act.ActivateTabRelative(-1) },
-  { key = 'RightArrow', mods = 'CTRL',       action = act.ActivateTabRelative(1) },
-  { key = 'RightArrow', mods = 'ALT',        action = act.SplitHorizontal{ domain =  'CurrentPaneDomain' } },
-  { key = 'DownArrow',  mods = 'ALT',        action = act.SplitVertical{ domain =  'CurrentPaneDomain' } },
-  { key = 'LeftArrow',  mods = 'SHIFT',      action = act.ActivatePaneDirection 'Left' },
-  { key = 'RightArrow', mods = 'SHIFT',      action = act.ActivatePaneDirection 'Right' },
-  { key = 'UpArrow',    mods = 'SHIFT',      action = act.ActivatePaneDirection 'Up' },
-  { key = 'DownArrow',  mods = 'SHIFT',      action = act.ActivatePaneDirection 'Down' },
-  { key = 'LeftArrow',  mods = 'ALT|SHIFT',  action = act.AdjustPaneSize { 'Left', 1 } },
-  { key = 'RightArrow', mods = 'ALT|SHIFT',  action = act.AdjustPaneSize { 'Right', 1 } },
-  { key = 'UpArrow',    mods = 'ALT|SHIFT',  action = act.AdjustPaneSize { 'Up', 1 } },
-  { key = 'DownArrow',  mods = 'ALT|SHIFT',  action = act.AdjustPaneSize { 'Down', 1 } },
-  { key = '1',          mods = 'ALT',        action = act.ActivateTab(0) },
-  { key = '2',          mods = 'ALT',        action = act.ActivateTab(1) },
-  { key = '3',          mods = 'ALT',        action = act.ActivateTab(2) },
-  { key = '4',          mods = 'ALT',        action = act.ActivateTab(3) },
-  { key = '5',          mods = 'ALT',        action = act.ActivateTab(4) },
-  { key = '6',          mods = 'ALT',        action = act.ActivateTab(5) },
-  { key = '7',          mods = 'ALT',        action = act.ActivateTab(6) },
-  { key = '8',          mods = 'ALT',        action = act.ActivateTab(7) },
-  { key = '9',          mods = 'ALT',        action = act.ActivateTab(8) },
-  { key = 'Enter',      mods = 'ALT',        action = act.ShowLauncher },
-  { key = 'Enter',      mods = 'CTRL',       action = act.ShowTabNavigator },
-  { key = 'l',          mods = 'CTRL',       action = act.ShowDebugOverlay },
-  { key = 'L',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
-  { key = 'C',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_config ) },
-  { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
-  { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
-  { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
-  { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c ) },
-  { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
-  { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
-  { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
-  { key = 'Home',       mods = 'CTRL',       action = act.ScrollToTop },
-  { key = 'End',        mods = 'CTRL',       action = act.ScrollToBottom },
-  { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
-  { key = 'PageDown',   mods = 'NONE',       action = act.ScrollByPage(0.5) },
-  { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
-  { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
-  { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
-  { key = 'Enter',      mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
-  { key = 'k',          mods = 'LEADER',     action = wezterm.action_callback( action_kill_process ) },
+    { key = 't',          mods = 'CTRL|ALT',       action = act.SpawnTab 'CurrentPaneDomain' },
+    { key = 'LeftArrow',  mods = 'CTRL|ALT',       action = act.ActivateTabRelative(-1) },
+    { key = 'RightArrow', mods = 'CTRL|ALT',       action = act.ActivateTabRelative(1) },
+    { key = 'Enter',      mods = 'CTRL|ALT',       action = act.ShowLauncher },
+    { key = 'Backspace',  mods = 'CTRL|ALT',       action = act.ShowDebugOverlay },
+    { key = 'k',          mods = 'CTRL|ALT',       action = wezterm.action_callback( action_kill_process ) },
+    { key = 'n',          mods = 'CTRL|ALT',       action = act.ShowTabNavigator },
+    { key = 'r',          mods = 'CTRL|ALT',       action = act.ReloadConfiguration },
+
+    -- use key mapping to perform KeyTable actions
+    { key = 'C', mods = 'LEADER',
+      action = act.Multiple {
+        act.ClearKeyTableStack,
+        wezterm.action_callback( clear_key_icons_stack ),
+      }
+    },
+    { key = 'P', mods = 'LEADER',
+      action = act.Multiple { 
+        act.PopKeyTable,
+        wezterm.action_callback( pop_key_icons_stack ),
+      }
+    },
+    { key = 'T', mods = 'LEADER',
+      action = act.Multiple { 
+        act.ActivateKeyTable({ name = "term", one_shot = false }),
+        wezterm.action_callback( add_term_key_icon )
+      }
+    },
+    { key = 'V', mods = 'LEADER',
+      action = act.Multiple { 
+        act.ActivateKeyTable({ name = "nvim", one_shot = false }),
+        wezterm.action_callback( add_nvim_key_icon )
+      }
+    },
+    { key = 'R', mods = 'LEADER',
+      action = act.Multiple { 
+        act.ActivateKeyTable({ name = "resize", one_shot = false }),
+        wezterm.action_callback( add_resize_key_icon )
+      }
+    },
 }
 
 -- Local key macros loaded from local configuration
-if local_config['Keys'] ~= nil then
-  for i = 1, #local_config['Keys'] do
-    key_mods_string = local_config['Keys'][i]
-    table.insert(config.keys, {
-      key = key_mods_string['key'],
-      mods = key_mods_string['mods'],
-      action = act.SendString ( key_mods_string['string'] )
-    })
+if local_config and local_config['keys'] then
+  for _, v in ipairs(local_config.keys) do
+    table.insert(config.keys, v)
   end
 end
 
 config.key_tables = {
-  copy_mode = {
-    { key = 'Escape',     mods = 'NONE', action = act.CopyMode 'Close' },
-    { key = 'b',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Block' } },
-    { key = 'c',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Cell' } },
-    { key = 'w',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Word' } },
-    { key = 'l',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Line' } },
-    { key = 's',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
-    { key = 'LeftArrow',  mods = 'NONE', action = act.CopyMode 'MoveLeft' },
-    { key = 'RightArrow', mods = 'NONE', action = act.CopyMode 'MoveRight' },
-    { key = 'UpArrow',    mods = 'NONE', action = act.CopyMode 'MoveUp' },
-    { key = 'DownArrow',  mods = 'NONE', action = act.CopyMode 'MoveDown' },
-    { key = 'Enter',      mods = 'NONE', action = act.Multiple{
-      { CopyTo   = 'Clipboard' },
-      { CopyMode = 'ClearPattern' },
-      { CopyMode = 'Close' } },
-    },
+  term = {
+    { key = 'd',          mods = 'CTRL',       action = wezterm.action_callback( action_exit_shell ) },
+    { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
+    { key = 'RightArrow', mods = 'ALT',        action = act.SplitHorizontal{ domain =  'CurrentPaneDomain' } },
+    { key = 'DownArrow',  mods = 'ALT',        action = act.SplitVertical{ domain =  'CurrentPaneDomain' } },
+    { key = 'LeftArrow',  mods = 'SHIFT',      action = act.ActivatePaneDirection 'Left' },
+    { key = 'RightArrow', mods = 'SHIFT',      action = act.ActivatePaneDirection 'Right' },
+    { key = 'UpArrow',    mods = 'SHIFT',      action = act.ActivatePaneDirection 'Up' },
+    { key = 'DownArrow',  mods = 'SHIFT',      action = act.ActivatePaneDirection 'Down' },
+    { key = 'L',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
+    { key = 'C',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_config ) },
+    { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
+    { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
+    { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
+    { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c ) },
+    { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
+    { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
+    { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
+    { key = 'Home',       mods = 'CTRL',       action = act.ScrollToTop },
+    { key = 'End',        mods = 'CTRL',       action = act.ScrollToBottom },
+    { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
+    { key = 'PageDown',   mods = 'NONE',       action = act.ScrollByPage(0.5) },
+    { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
+    { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
+    { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
+    { key = 'Enter',      mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
+  },
+    
+  resize = {
+    { key = 'LeftArrow',  mods = '',  action = act.AdjustPaneSize { 'Left', 1 } },
+    { key = 'RightArrow', mods = '',  action = act.AdjustPaneSize { 'Right', 1 } },
+    { key = 'UpArrow',    mods = '',  action = act.AdjustPaneSize { 'Up', 1 } },
+    { key = 'DownArrow',  mods = '',  action = act.AdjustPaneSize { 'Down', 1 } },
   },
   
-  search_mode = {
-    { key = 'Escape',     mods = 'NONE', action = act.Multiple{
-      { CopyMode = 'ClearPattern' },
-      { CopyMode = 'Close' } },
-    },
-    { key = 'b',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Block' } },
-    { key = 'c',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Cell' } },
-    { key = 'w',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Word' } },
-    { key = 'l',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'Line' } },
-    { key = 's',          mods = 'ALT',  action = act.CopyMode{ SetSelectionMode = 'SemanticZone' } },
-    { key = 'PageUp',     mods = 'NONE', action = act.CopyMode 'PriorMatch' },
-    { key = 'PageDown',   mods = 'NONE', action = act.CopyMode 'NextMatch' },
-    { key = 'LeftArrow',  mods = 'NONE', action = act.CopyMode 'MoveLeft' },
-    { key = 'RightArrow', mods = 'NONE', action = act.CopyMode 'MoveRight' },
-    { key = 'UpArrow',    mods = 'NONE', action = act.CopyMode 'MoveUp' },
-    { key = 'DownArrow',  mods = 'NONE', action = act.CopyMode 'MoveDown' },
-    { key = 'Enter',      mods = 'NONE', action = act.Multiple{
-      { CopyTo   = 'Clipboard' },
-      { CopyMode = 'ClearPattern' },
-      { CopyMode = 'Close' } },
-    },
-  },
+  nvim = {},
 }
+
 
 config.mouse_bindings = {
   {
@@ -378,13 +378,18 @@ end
 
 config.launch_menu = launch_menu
 
-
 -- Top left & right status bar
 wezterm.on('update-status', function(window, pane)
   window:set_left_status(wezterm.format({}))
 end)
 
 wezterm.on('update-right-status', function(window, pane)
+  if #key_icons > 0 then
+    key_tables_text = 'key tables: '
+  else
+    key_tables_text = ''
+  end
+  
   if get_shell(pane) == '' then
     running_color = 'rgb(255, 0, 0)'
   else
@@ -436,6 +441,10 @@ wezterm.on('update-right-status', function(window, pane)
   -- Format top status
   --------------------
   window:set_right_status(wezterm.format({
+    { Foreground = { Color = 'Gray' } },
+    { Text = key_tables_text },
+    { Foreground = { Color = 'Yellow' } },
+    { Text = key_icons .. '        ' },
     { Foreground = { Color = running_color } },
     { Text = wezterm.nerdfonts.md_fire },
     { Foreground = { Color = leader_color } },
@@ -460,6 +469,12 @@ icons_names = {
   nu         = { wezterm.nerdfonts.md_chevron_right, 'Nu' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
+  if tab.active_pane.title:match('Copy mode:') then
+    title_prefix = 'Copy mode: '
+  else
+    title_prefix = ''
+  end
+  
   process_name = get_rootname(tab.active_pane.foreground_process_name)
   
   -- this case covers lua debug overlay and TabNavigator
@@ -470,16 +485,16 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   icon_name = icons_names[process_name] or { wezterm.nerdfonts.oct_question, 'Shell' }
   
   return wezterm.format({
-    { Text = icon_name[1] .. ' ' .. icon_name[2] },
+    { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] },
   })
 end)
 
 
 -- Startup window position is loaded from local configuration
 wezterm.on('gui-startup', function(cmd)
-  if local_config['Window'] ~= nil then
-    x = local_config['Window']['x']
-    y = local_config['Window']['y']
+  if local_config and local_config['window_pos'] then
+    x = local_config['window_pos']['x']
+    y = local_config['window_pos']['y']
   end
   
   if x == nil or y == nil then
@@ -489,7 +504,6 @@ wezterm.on('gui-startup', function(cmd)
   
   wezterm.mux.spawn_window(cmd or { position = { x = x, y = y } })
 end)
-
 
 -- Default program
 if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
@@ -508,3 +522,11 @@ if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
 end
 
 return config
+
+
+----------------------------------------------------------------------------
+-- debugging goodies
+--
+-- get gui window, active pane, active pane title:
+--
+--     > wezterm['mux']['all_windows']()[1]:gui_window():active_pane():get_title()
