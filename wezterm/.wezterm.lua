@@ -212,6 +212,25 @@ action_kill_process = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
+-- 'Ctrl + Alt + ;' - Toggle zoom state of pane running alt screen
+action_alt_pane_toggle_zoom = function(window, pane)
+  tab = window:active_tab()
+
+  for _, pane_info in ipairs(tab:panes_with_info()) do
+    p = pane_info['pane']
+    if p:is_alt_screen_active() then
+      p:activate()
+
+      if pane_info['is_zoomed'] then
+        tab:set_zoomed(false)
+      else
+        tab:set_zoomed(true)
+      end
+    end
+  end
+end
+
+----------------------------------------------------------------------------------
 -- key tables stack icons - clear, add, pop
 key_icons = ''
 clear_key_icons_stack = function(window, pane)
@@ -238,17 +257,19 @@ end
 ----------------------------------------------------------------------------------
 config.keys = {
     { key = 'k',          mods = 'LEADER',   action = wezterm.action_callback( action_kill_process ) },
-                                             
+    { key = 'r',          mods = 'LEADER',   action = act.ReloadConfiguration },
+    
     { key = 't',          mods = 'CTRL|ALT', action = act.SpawnTab 'CurrentPaneDomain' },
     { key = 'LeftArrow',  mods = 'CTRL|ALT', action = act.ActivateTabRelative(-1) },
     { key = 'RightArrow', mods = 'CTRL|ALT', action = act.ActivateTabRelative(1) },
     { key = 'Enter',      mods = 'CTRL|ALT', action = act.ShowLauncher },
     { key = 'Backspace',  mods = 'CTRL|ALT', action = act.ShowDebugOverlay },
     { key = 'n',          mods = 'CTRL|ALT', action = act.ShowTabNavigator },
-    { key = 'r',          mods = 'CTRL|ALT', action = act.ReloadConfiguration },
-
+    { key = 'z',          mods = 'CTRL|ALT', action = act.TogglePaneZoomState },
+    { key = ';',          mods = 'CTRL|ALT', action = wezterm.action_callback( action_alt_pane_toggle_zoom ) },
+    
     { key = 'd',          mods = 'CTRL',     action = wezterm.action_callback( action_exit_shell ) },
-
+    
     -- use key mapping to perform KeyTable actions
     { key = '0', mods = 'CTRL|ALT',
       action = act.Multiple {
