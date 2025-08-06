@@ -16,7 +16,7 @@ local local_config = prequire 'local_config'
 config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
 config.check_for_updates = false
---config.disable_default_key_bindings = true
+config.disable_default_key_bindings = true
 config.font = wezterm.font 'Consolas'
 config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
@@ -204,12 +204,10 @@ end
 action_kill_process = function(window, pane)
   process_info = pane:get_foreground_process_info()
 
-  if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
-    if os.getenv('WSL_DISTRO_NAME') == nil then
-      os.execute('tskill ' .. process_info.pid)
-    else
-      os.execute('kill -9 ' .. process_info.pid)
-    end
+  if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
+    os.execute('tskill ' .. process_info.pid)
+  else
+    os.execute('kill -9 ' .. process_info.pid)
   end
 end
 
@@ -239,14 +237,17 @@ end
 
 ----------------------------------------------------------------------------------
 config.keys = {
-    { key = 't',          mods = 'CTRL|ALT',       action = act.SpawnTab 'CurrentPaneDomain' },
-    { key = 'LeftArrow',  mods = 'CTRL|ALT',       action = act.ActivateTabRelative(-1) },
-    { key = 'RightArrow', mods = 'CTRL|ALT',       action = act.ActivateTabRelative(1) },
-    { key = 'Enter',      mods = 'CTRL|ALT',       action = act.ShowLauncher },
-    { key = 'Backspace',  mods = 'CTRL|ALT',       action = act.ShowDebugOverlay },
-    { key = 'k',          mods = 'CTRL|ALT',       action = wezterm.action_callback( action_kill_process ) },
-    { key = 'n',          mods = 'CTRL|ALT',       action = act.ShowTabNavigator },
-    { key = 'r',          mods = 'CTRL|ALT',       action = act.ReloadConfiguration },
+    { key = 'k',          mods = 'LEADER',   action = wezterm.action_callback( action_kill_process ) },
+                                             
+    { key = 't',          mods = 'CTRL|ALT', action = act.SpawnTab 'CurrentPaneDomain' },
+    { key = 'LeftArrow',  mods = 'CTRL|ALT', action = act.ActivateTabRelative(-1) },
+    { key = 'RightArrow', mods = 'CTRL|ALT', action = act.ActivateTabRelative(1) },
+    { key = 'Enter',      mods = 'CTRL|ALT', action = act.ShowLauncher },
+    { key = 'Backspace',  mods = 'CTRL|ALT', action = act.ShowDebugOverlay },
+    { key = 'n',          mods = 'CTRL|ALT', action = act.ShowTabNavigator },
+    { key = 'r',          mods = 'CTRL|ALT', action = act.ReloadConfiguration },
+
+    { key = 'd',          mods = 'CTRL',     action = wezterm.action_callback( action_exit_shell ) },
 
     -- use key mapping to perform KeyTable actions
     { key = 'C', mods = 'LEADER',
@@ -290,7 +291,6 @@ end
 
 config.key_tables = {
   term = {
-    { key = 'd',          mods = 'CTRL',       action = wezterm.action_callback( action_exit_shell ) },
     { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
     { key = 'RightArrow', mods = 'ALT',        action = act.SplitHorizontal{ domain =  'CurrentPaneDomain' } },
     { key = 'DownArrow',  mods = 'ALT',        action = act.SplitVertical{ domain =  'CurrentPaneDomain' } },
@@ -344,7 +344,7 @@ config.mouse_bindings = {
 
 local launch_menu = {}
 
-if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
+if wezterm.target_triple:match('windows') then
   table.insert(launch_menu, {
     label = 'Neovim',
     args = { 'nvim.bat' },
@@ -506,7 +506,7 @@ wezterm.on('gui-startup', function(cmd)
 end)
 
 -- Default program
-if wezterm.target_triple == 'x86_64-pc-windows-msvc' then
+if wezterm.target_triple:match('windows') then
   config.set_environment_variables = {
     prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
   }
