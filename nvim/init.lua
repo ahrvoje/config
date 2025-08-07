@@ -43,5 +43,9 @@ wk.add({
   { "<leader>q", group = "Persistence" },
 })
 
+require("notify").setup({
+    timeout = 7000,
+})
+
 require("config.options")
 require("config.keymaps")
