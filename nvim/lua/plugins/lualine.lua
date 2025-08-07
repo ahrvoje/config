@@ -28,26 +28,53 @@ return {
 					-- If a macro is being recorded, show "Recording @<register>"
 					if reg ~= "" then
 						return "Recording @" .. reg
-					else
-						-- Get the full mode name using nvim_get_mode()
-						local mode = vim.api.nvim_get_mode().mode
-						local mode_map = {
-							n = 'NORMAL',
-							i = 'INSERT',
-							v = 'VISUAL',
-							V = 'V-LINE',
-							['^V'] = 'V-BLOCK',
-							c = 'COMMAND',
-							R = 'REPLACE',
-							s = 'SELECT',
-							S = 'S-LINE',
-							['^S'] = 'S-BLOCK',
-							t = 'TERMINAL',
-						}
-
-						-- Return the full mode name
-						return mode_map[mode] or mode:upper()
 					end
+
+          -- https://github.com/nvim-lualine/lualine.nvim/blob/master/lua/lualine/utils/mode.lua
+          local mode_map = {
+            ['n']      = 'NORMAL',
+            ['no']     = 'O-PENDING',
+            ['nov']    = 'O-PENDING',
+            ['noV']    = 'O-PENDING',
+            ['no\22']  = 'O-PENDING',
+            ['niI']    = 'NORMAL',
+            ['niR']    = 'NORMAL',
+            ['niV']    = 'NORMAL',
+            ['nt']     = 'NORMAL',
+            ['ntT']    = 'NORMAL',
+            ['v']      = 'VISUAL',
+            ['vs']     = 'VISUAL',
+            ['V']      = 'V-LINE',
+            ['Vs']     = 'V-LINE',
+            ['\22']    = 'V-BLOCK',
+            ['\22s']   = 'V-BLOCK',
+            ['s']      = 'SELECT',
+            ['S']      = 'S-LINE',
+            ['\19']    = 'S-BLOCK',
+            ['i']      = 'INSERT',
+            ['ic']     = 'INSERT',
+            ['ix']     = 'INSERT',
+            ['R']      = 'REPLACE',
+            ['Rc']     = 'REPLACE',
+            ['Rx']     = 'REPLACE',
+            ['Rv']     = 'V-REPLACE',
+            ['Rvc']    = 'V-REPLACE',
+            ['Rvx']    = 'V-REPLACE',
+            ['c']      = 'COMMAND',
+            ['cv']     = 'EX',
+            ['ce']     = 'EX',
+            ['r']      = 'REPLACE',
+            ['rm']     = 'MORE',
+            ['r?']     = 'CONFIRM',
+            ['!']      = 'SHELL',
+            ['t']      = 'TERMINAL',
+          }
+
+          -- Get the full mode name using nvim_get_mode()
+          local mode = vim.api.nvim_get_mode().mode
+
+          -- Return the full mode name
+          return mode_map[mode] or mode:upper()
 				end
         },
         lualine_b = {'branch', 'diff', 'diagnostics'},
