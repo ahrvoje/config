@@ -1,6 +1,18 @@
 vim.g.mapleader = "\\"
 vim.g.maplocalleader = "\\"
 
+-- highlight on yank
+vim.cmd [[
+  augroup YankHighlight
+    autocmd!
+    autocmd TextYankPost * silent! lua vim.highlight.on_yank{higroup="IncSearch", timeout=200}
+  augroup END
+]]
+
+-- persistent undo across sessions
+vim.opt.undofile = true
+
+-- ensure Lazy
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not vim.loop.fs_stat(lazypath) then
   vim.fn.system({
