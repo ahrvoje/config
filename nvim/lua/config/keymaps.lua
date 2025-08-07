@@ -19,6 +19,14 @@ vim.keymap.set("n", "<leader>fb", builtin.buffers, { desc = "Telescope buffers" 
 vim.keymap.set("n", "<leader>fh", builtin.help_tags, { desc = "Telescope help tags" })
 
 
+-- ezBookmarks
+vim.keymap.set("n", "<leader>ba", function() require("ezbookmarks").AddBookmark() end,    { desc = "Add bookmark" })
+vim.keymap.set("n", "<leader>br", function() require("ezbookmarks").RemoveBookmark() end, { desc = "Remove bookmark" })
+vim.keymap.set("n", "<leader>bo", function() require("ezbookmarks").OpenBookmark() end,   { desc = "Open bookmark" })
+vim.keymap.set("n", "<leader>bi", function() require("ezbookmarks").AddIgnore()end,       { desc = "Ignore file" })
+vim.keymap.set("n", "<leader>bu", function() require("ezbookmarks").RemoveIgnore()end,    { desc = "Unignore file" })
+
+
 -- grug-far
 vim.keymap.set("n", "<leader>g", "<cmd>GrugFar<CR>", { desc = "Grug" })
 
