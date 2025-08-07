@@ -9,6 +9,14 @@ vim.cmd [[
   augroup END
 ]]
 
+-- autosave files on focus lost
+vim.cmd [[
+  augroup autosave_buffer
+    au!
+    au FocusLost * :w
+  augroup END
+]]
+
 -- persistent undo across sessions
 vim.opt.undofile = true
 

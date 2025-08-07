@@ -3,15 +3,16 @@ vim.keymap.set("n", "<C-Down>",  "<C-w>j", { desc = "Go to down pane" })
 vim.keymap.set("n", "<C-Up>",    "<C-w>k", { desc = "Go to up pane" })
 vim.keymap.set("n", "<C-Right>", "<C-w>l", { desc = "Go to right pane" })
 
-vim.keymap.set("n", "<A-Left>",  "<C-w>h", { desc = "Go to left pane" })
-vim.keymap.set("n", "<A-Down>",  "<C-w>j", { desc = "Go to down pane" })
-vim.keymap.set("n", "<A-Up>",    "<C-w>k", { desc = "Go to up pane" })
-vim.keymap.set("n", "<A-Right>", "<C-w>l", { desc = "Go to right pane" })
+vim.keymap.set("n", "<A-Left>",  "<C-w><", { desc = "Go to left pane" })
+vim.keymap.set("n", "<A-Right>", "<C-w>>", { desc = "Go to right pane" })
+vim.keymap.set("n", "<A-Down>",  "<C-w>-", { desc = "Go to down pane" })
+vim.keymap.set("n", "<A-Up>",    "<C-w>+", { desc = "Go to up pane" })
 
 vim.keymap.set("n", "<Tab>",   "<cmd>tabn<CR>", { desc = "Next tab" })
 vim.keymap.set("n", "<S-Tab>", "<cmd>tabp<CR>", { desc = "Previous tab" })
 
 vim.keymap.set("n", "<leader>w", "<cmd>set wrap!<CR>", { desc = "Toggle wrap / nowrap" })
+
 
 -- Telescope
 local builtin = require("telescope.builtin")
