@@ -7,6 +7,7 @@ local config = wezterm.config_builder()
 local function prequire(m) 
   local ok, err = pcall(require, m) 
   if not ok then return nil, err end
+
   return err
 end
 
@@ -87,11 +88,11 @@ get_shell = function(pane)
   process_name = get_process_name(pane)
   
   -- this case covers lua debug overlay and TabNavigator
-  if process_name == nil then
+  if not process_name then
     return process_name
   end
   
-  if shells[process_name] ~= nil then
+  if shells[process_name] then
     return process_name
   end
   
@@ -289,43 +290,38 @@ add_nvim_key_icon = function(window, pane)
   key_icons = wezterm.nerdfonts.custom_neovim .. ' ' .. key_icons
 end
 
-add_resize_key_icon = function(window, pane)
-  key_icons = wezterm.nerdfonts.fa_arrows .. ' ' .. key_icons
-end
-
 ----------------------------------------------------------------------------------
 config.keys = {
-    { key = 'k',          mods = 'LEADER',   action = wezterm.action_callback( action_kill_process ) },
-    { key = 'r',          mods = 'LEADER',   action = act.ReloadConfiguration },
+    { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
+    { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
     
-    { key = 't',          mods = 'CTRL|ALT', action = act.SpawnTab 'CurrentPaneDomain' },
-    { key = 'LeftArrow',  mods = 'CTRL|ALT', action = act.ActivateTabRelative(-1) },
-    { key = 'RightArrow', mods = 'CTRL|ALT', action = act.ActivateTabRelative(1) },
     { key = 'Enter',      mods = 'CTRL|ALT', action = act.ShowLauncher },
     { key = 'Backspace',  mods = 'CTRL|ALT', action = act.ShowDebugOverlay },
-    { key = 'z',          mods = 'CTRL|ALT', action = act.TogglePaneZoomState },
-    { key = 'n',          mods = 'CTRL|ALT', action = act.ShowTabNavigator },
+    { key = 'Space',      mods = 'CTRL|ALT', action = act.ShowTabNavigator },
+    
+    { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
+    { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(-1) },
+    { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(1) },
+    
     { key = '\'',         mods = 'CTRL|ALT', action = wezterm.action_callback( action_pane_toggle_zoom ) },
     { key = ';',          mods = 'CTRL|ALT', action = wezterm.action_callback( action_alt_pane_toggle_zoom ) },
     
-    { key = 'd',          mods = 'CTRL',     action = wezterm.action_callback( action_exit_shell ) },
+    { key = 'LeftArrow',  mods = 'CTRL', action = act.ActivatePaneDirection 'Left' },
+    { key = 'DownArrow',  mods = 'CTRL', action = act.ActivatePaneDirection 'Down' },
+    { key = 'UpArrow',    mods = 'CTRL', action = act.ActivatePaneDirection 'Up' },
+    { key = 'RightArrow', mods = 'CTRL', action = act.ActivatePaneDirection 'Right' },
     
-    { key = 'LeftArrow',  mods = 'CTRL',     action = act.ActivatePaneDirection 'Left' },
-    { key = 'DownArrow',  mods = 'CTRL',     action = act.ActivatePaneDirection 'Down' },
-    { key = 'UpArrow',    mods = 'CTRL',     action = act.ActivatePaneDirection 'Up' },
-    { key = 'RightArrow', mods = 'CTRL',     action = act.ActivatePaneDirection 'Right' },
+    { key = 'LeftArrow',  mods = 'ALT', action = act.AdjustPaneSize { 'Left', 1 } },
+    { key = 'DownArrow',  mods = 'ALT', action = act.AdjustPaneSize { 'Down', 1 } },
+    { key = 'UpArrow',    mods = 'ALT', action = act.AdjustPaneSize { 'Up', 1 } },
+    { key = 'RightArrow', mods = 'ALT', action = act.AdjustPaneSize { 'Right', 1 } },
     
-    { key = 'LeftArrow',  mods = 'ALT',  action = act.AdjustPaneSize { 'Left', 1 } },
-    { key = 'DownArrow',  mods = 'ALT',  action = act.AdjustPaneSize { 'Down', 1 } },
-    { key = 'UpArrow',    mods = 'ALT',  action = act.AdjustPaneSize { 'Up', 1 } },
-    { key = 'RightArrow', mods = 'ALT',  action = act.AdjustPaneSize { 'Right', 1 } },
+    { key = 'LeftArrow',  mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Left' } },
+    { key = 'DownArrow',  mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Down' } },
+    { key = 'UpArrow',    mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Up' } },
+    { key = 'RightArrow', mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Right' } },
     
-    { key = 'LeftArrow',  mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Left' } },
-    { key = 'DownArrow',  mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Down' } },
-    { key = 'UpArrow',    mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Up' } },
-    { key = 'RightArrow', mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Right' } },
-    
-    -- use key mapping to perform KeyTable actions
+    -- key mappings for KeyTable actions and stack
     { key = '0', mods = 'CTRL|ALT',
       action = act.Multiple {
         act.ClearKeyTableStack,
@@ -350,36 +346,35 @@ config.keys = {
         wezterm.action_callback( add_nvim_key_icon )
       }
     },
---    { key = '7', mods = 'CTRL|ALT',
---      action = act.Multiple { 
---        act.ActivateKeyTable({ name = "resize", one_shot = false }),
---        wezterm.action_callback( add_resize_key_icon )
---      }
---    },
 }
 
 config.key_tables = {
   term = {
-    { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
-    { key = 'L',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
-    { key = 'C',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_config ) },
-    { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
-    { key = '-',          mods = 'CTRL',       action = act.DecreaseFontSize },
-    { key = '0',          mods = 'CTRL',       action = act.ResetFontSize },
-    { key = 'c',          mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c ) },
-    { key = 'v',          mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
-    { key = 'x',          mods = 'CTRL',       action = act.ActivateCopyMode },
-    { key = 's',          mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
-    { key = 'Home',       mods = 'CTRL',       action = act.ScrollToTop },
-    { key = 'End',        mods = 'CTRL',       action = act.ScrollToBottom },
-    { key = 'PageUp',     mods = 'NONE',       action = act.ScrollByPage(-0.5) },
-    { key = 'PageDown',   mods = 'NONE',       action = act.ScrollByPage(0.5) },
-    { key = 'Home',       mods = 'NONE',       action = wezterm.action_callback( action_home ) },
-    { key = 'UpArrow',    mods = 'NONE',       action = wezterm.action_callback( action_up ) },
-    { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
-    { key = 'Enter',      mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
-  },
+    { key = 'w',         mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
+    { key = 'c',         mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c ) },
     
+    { key = 'L',         mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
+    { key = 'C',         mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_config ) },
+    
+    { key = '=',         mods = 'CTRL',       action = act.IncreaseFontSize },
+    { key = '-',         mods = 'CTRL',       action = act.DecreaseFontSize },
+    { key = '0',         mods = 'CTRL',       action = act.ResetFontSize },
+    
+    { key = 'v',         mods = 'CTRL',       action = act.PasteFrom 'Clipboard' },
+    { key = 'x',         mods = 'CTRL',       action = act.ActivateCopyMode },
+    { key = 's',         mods = 'CTRL',       action = act.Search 'CurrentSelectionOrEmptyString' },
+    
+    { key = 'Home',      mods = 'CTRL',       action = act.ScrollToTop },
+    { key = 'End',       mods = 'CTRL',       action = act.ScrollToBottom },
+    { key = 'PageUp',    mods = 'NONE',       action = act.ScrollByPage(-0.5) },
+    { key = 'PageDown',  mods = 'NONE',       action = act.ScrollByPage(0.5) },
+    
+    { key = 'Home',      mods = 'NONE',       action = wezterm.action_callback( action_home ) },
+    { key = 'UpArrow',   mods = 'NONE',       action = wezterm.action_callback( action_up ) },
+    { key = 'DownArrow', mods = 'NONE',       action = wezterm.action_callback( action_down ) },
+    { key = 'Enter',     mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
+  },
+  
   nvim = {},
 }
 
