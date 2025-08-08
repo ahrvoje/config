@@ -41,10 +41,10 @@ config.color_scheme = 'Bright (base16)'
 -- config.color_scheme = 'Windows NT (base16)'
 
 -- Scrollbar
-config.enable_scroll_bar     = true
-config.min_scroll_bar_height = '2cell'
-config.colors                = { scrollbar_thumb = '#556666' }
-config.window_padding        = { left = 8, right = 16, top = 4, bottom = 4 }  -- right padding is scrollbar width
+--config.enable_scroll_bar     = true
+--config.min_scroll_bar_height = '2cell'
+--config.colors                = { scrollbar_thumb = '#556666' }
+--config.window_padding        = { left = 8, right = 16, top = 4, bottom = 4 }  -- right padding is scrollbar width
 
 
 -- Equivalent to POSIX basename(3)
@@ -189,11 +189,14 @@ end
 -- 'LEADER + Enter' - Clear screen action
 action_clear_screen = function(window, pane)
   shell = get_shell(pane)
-
+  
   if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' or shell == 'nu' then
     window:perform_action(act.SendString ( 'cls\r' ), pane)
+    window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
+    window:perform_action(act.ClearScrollback 'ScrollbackAndViewport', pane)
+    window:perform_action(act.SendKey { key = 'L', mods = 'CTRL' }, pane)
   end
-
+  
   if shell == 'bash' or shell == 'wslhost' then
     window:perform_action(act.SendString ( 'printf \'\\033c\\e[3J\'\r' ), pane)
   end
@@ -203,7 +206,7 @@ end
 -- 'LEADER + k' - Kill Process action
 action_kill_process = function(window, pane)
   process_info = pane:get_foreground_process_info()
-
+  
   if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
     os.execute('tskill ' .. process_info.pid)
   else
@@ -212,20 +215,56 @@ action_kill_process = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
--- 'Ctrl + Alt + ;' - Toggle zoom state of pane running alt screen
-action_alt_pane_toggle_zoom = function(window, pane)
+-- 'Ctrl + Alt + '' - Pane zoom toggle
+action_pane_toggle_zoom = function(window, pane)
   tab = window:active_tab()
-
+  
   for _, pane_info in ipairs(tab:panes_with_info()) do
     p = pane_info['pane']
-    if p:is_alt_screen_active() then
-      p:activate()
 
+    if pane_info['is_active'] then
       if pane_info['is_zoomed'] then
         tab:set_zoomed(false)
       else
         tab:set_zoomed(true)
       end
+    end
+  end
+end
+
+-- 'Ctrl + Alt + ;' - Toggle zoom state of pane running alt screen
+action_alt_pane_toggle_zoom = function(window, pane)
+  tab = window:active_tab()
+  
+  for _, pane_info in ipairs(tab:panes_with_info()) do
+    p = pane_info['pane']
+    if p:is_alt_screen_active() then
+      p:activate()
+    end
+  end
+
+  for _, pane_info in ipairs(tab:panes_with_info()) do
+    p = pane_info['pane']
+    if pane_info['is_active'] then
+      if pane_info['is_zoomed'] then
+        tab:set_zoomed(false)
+      else
+        tab:set_zoomed(true)
+      end
+    end
+  end
+end
+
+action_send_to_alt_pane = function(window, pane)
+  text = window:get_selection_text_for_pane(pane)
+
+  tab = window:active_tab()
+  for _, pane_info in ipairs(tab:panes_with_info()) do
+    p = pane_info['pane']
+    if p:is_alt_screen_active() then
+      wezterm.log_info(text)
+      window:perform_action(act.SendString(text), p)
+      p:activate()
     end
   end
 end
@@ -264,11 +303,27 @@ config.keys = {
     { key = 'RightArrow', mods = 'CTRL|ALT', action = act.ActivateTabRelative(1) },
     { key = 'Enter',      mods = 'CTRL|ALT', action = act.ShowLauncher },
     { key = 'Backspace',  mods = 'CTRL|ALT', action = act.ShowDebugOverlay },
-    { key = 'n',          mods = 'CTRL|ALT', action = act.ShowTabNavigator },
     { key = 'z',          mods = 'CTRL|ALT', action = act.TogglePaneZoomState },
+    { key = 'n',          mods = 'CTRL|ALT', action = act.ShowTabNavigator },
+    { key = '\'',         mods = 'CTRL|ALT', action = wezterm.action_callback( action_pane_toggle_zoom ) },
     { key = ';',          mods = 'CTRL|ALT', action = wezterm.action_callback( action_alt_pane_toggle_zoom ) },
     
     { key = 'd',          mods = 'CTRL',     action = wezterm.action_callback( action_exit_shell ) },
+    
+    { key = 'LeftArrow',  mods = 'CTRL',     action = act.ActivatePaneDirection 'Left' },
+    { key = 'DownArrow',  mods = 'CTRL',     action = act.ActivatePaneDirection 'Down' },
+    { key = 'UpArrow',    mods = 'CTRL',     action = act.ActivatePaneDirection 'Up' },
+    { key = 'RightArrow', mods = 'CTRL',     action = act.ActivatePaneDirection 'Right' },
+    
+    { key = 'LeftArrow',  mods = 'ALT',  action = act.AdjustPaneSize { 'Left', 1 } },
+    { key = 'DownArrow',  mods = 'ALT',  action = act.AdjustPaneSize { 'Down', 1 } },
+    { key = 'UpArrow',    mods = 'ALT',  action = act.AdjustPaneSize { 'Up', 1 } },
+    { key = 'RightArrow', mods = 'ALT',  action = act.AdjustPaneSize { 'Right', 1 } },
+    
+    { key = 'LeftArrow',  mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Left' } },
+    { key = 'DownArrow',  mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Down' } },
+    { key = 'UpArrow',    mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Up' } },
+    { key = 'RightArrow', mods = 'CTRL|ALT',      action = act.SplitPane { direction = 'Right' } },
     
     -- use key mapping to perform KeyTable actions
     { key = '0', mods = 'CTRL|ALT',
@@ -295,30 +350,17 @@ config.keys = {
         wezterm.action_callback( add_nvim_key_icon )
       }
     },
-    { key = '7', mods = 'CTRL|ALT',
-      action = act.Multiple { 
-        act.ActivateKeyTable({ name = "resize", one_shot = false }),
-        wezterm.action_callback( add_resize_key_icon )
-      }
-    },
+--    { key = '7', mods = 'CTRL|ALT',
+--      action = act.Multiple { 
+--        act.ActivateKeyTable({ name = "resize", one_shot = false }),
+--        wezterm.action_callback( add_resize_key_icon )
+--      }
+--    },
 }
-
--- Local key macros loaded from local configuration
-if local_config and local_config['keys'] then
-  for _, v in ipairs(local_config.keys) do
-    table.insert(config.keys, v)
-  end
-end
 
 config.key_tables = {
   term = {
     { key = 'w',          mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
-    { key = 'RightArrow', mods = 'ALT',        action = act.SplitHorizontal{ domain =  'CurrentPaneDomain' } },
-    { key = 'DownArrow',  mods = 'ALT',        action = act.SplitVertical{ domain =  'CurrentPaneDomain' } },
-    { key = 'LeftArrow',  mods = 'SHIFT',      action = act.ActivatePaneDirection 'Left' },
-    { key = 'RightArrow', mods = 'SHIFT',      action = act.ActivatePaneDirection 'Right' },
-    { key = 'UpArrow',    mods = 'SHIFT',      action = act.ActivatePaneDirection 'Up' },
-    { key = 'DownArrow',  mods = 'SHIFT',      action = act.ActivatePaneDirection 'Down' },
     { key = 'L',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
     { key = 'C',          mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_config ) },
     { key = '=',          mods = 'CTRL',       action = act.IncreaseFontSize },
@@ -337,17 +379,26 @@ config.key_tables = {
     { key = 'DownArrow',  mods = 'NONE',       action = wezterm.action_callback( action_down ) },
     { key = 'Enter',      mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
   },
-  
-  resize = {
-    { key = 'LeftArrow',  mods = '',  action = act.AdjustPaneSize { 'Left', 1 } },
-    { key = 'RightArrow', mods = '',  action = act.AdjustPaneSize { 'Right', 1 } },
-    { key = 'UpArrow',    mods = '',  action = act.AdjustPaneSize { 'Up', 1 } },
-    { key = 'DownArrow',  mods = '',  action = act.AdjustPaneSize { 'Down', 1 } },
-  },
-  
+    
   nvim = {},
 }
 
+-- Local key macros loaded from local configuration
+if local_config and local_config['keys'] then
+  for _, v in ipairs(local_config.keys) do
+    table.insert(config.keys, v)
+  end
+end
+
+-- send selected text to alt-screen pane, e.g. send terminal selection to nvim
+if wezterm.gui then
+  copy_mode = wezterm.gui.default_key_tables().copy_mode
+  table.insert(
+    copy_mode,
+    { key = 'Enter', mods = 'CTRL', action = wezterm.action_callback( action_send_to_alt_pane ) }
+  )
+  config.key_tables['copy_mode'] = copy_mode
+end
 
 config.mouse_bindings = {
   {
