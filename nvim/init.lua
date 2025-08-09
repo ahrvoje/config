@@ -13,7 +13,7 @@ vim.cmd [[
 vim.cmd [[
   augroup autosave_buffer
     au!
-    au FocusLost * :w
+    au FocusLost * if expand('%') != '' | w | endif
   augroup END
 ]]
 
