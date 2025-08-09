@@ -36,16 +36,5 @@ vim.opt.rtp:prepend(lazypath)
 
 require("lazy").setup("plugins")
 
-local wk = require("which-key")
-wk.add({
-  { "<leader>b", group = "Bookmarks" },
-  { "<leader>f", group = "Telescope" },
-  { "<leader>q", group = "Persistence" },
-})
-
-require("notify").setup({
-    timeout = 7000,
-})
-
 require("config.options")
 require("config.keymaps")

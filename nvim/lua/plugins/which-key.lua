@@ -2,11 +2,16 @@ return {
   "folke/which-key.nvim",
   event = "VeryLazy",
   config = function()
-    require("which-key").setup({
-      -- your configuration comes here
-      -- or leave it empty to use the default settings
-      -- refer to the configuration section below
+    local wk = require("which-key")
+    
+    wk.setup({
       preset="helix",
+    })
+
+    wk.add({
+      { "<leader>b", group = "Bookmarks" },
+      { "<leader>f", group = "Telescope" },
+      { "<leader>q", group = "Persistence" },
     })
   end,
 }

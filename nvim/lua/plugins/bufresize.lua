@@ -1,4 +1,4 @@
 return {
   "kwkarlwang/bufresize.nvim",
-  event = "UiEnter",
+  event = "UIEnter",
 }

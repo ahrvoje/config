@@ -7,34 +7,42 @@ return {
     {
       "nvim-telescope/telescope-fzf-native.nvim",
       build = "make",
-      cond = function()
-        return vim.fn.executable("make") == 1
-      end,
+      cond = function() return vim.fn.executable("make") == 1 end,
     },
     { "nvim-telescope/telescope-ui-select.nvim" },
   },
-  config = function()
-    local telescope = require("telescope")
-
-    telescope.setup({
-      -- This defaults table is where you configure fzf-native
+  keys = {
+    { "<leader>ff", "<cmd>Telescope find_files hidden=true<CR>", desc = "Telescope find files" },
+    { "<leader>fg", function () require("telescope.builtin").live_grep() end, desc = "Telescope live grep" },
+    { "<leader>fb", function () require("telescope.builtin").buffers() end, desc = "Telescope buffers" },
+    { "<leader>fh", function () require("telescope.builtin").help_tags() end, desc = "Telescope help tags" },
+    { "<leader>p", "<cmd>Telescope projects<CR>", desc = "Toggle projects" },
+  },
+  opts = function()
+    local themes = require("telescope.themes")
+    return {
       defaults = {
-        -- This is the new section to enable fzf-native
-        fzf = {
-          fuzzy = true, -- Toggles fuzzy finding on/off.
-          override_generic_sorter = true, -- Override the generic sorter
-          override_file_sorter = true, -- Override the file sorter
-          case_mode = "smart_case", -- "smart_case", "respect_case", "ignore_case"
-        },
+        -- Good general perf defaults
+        file_ignore_patterns = { "%.git/", "node_modules/", "dist/", "target/" },
+        path_display = { "smart" },
+        dynamic_preview_title = true,
       },
       extensions = {
-        ["ui-select"] = {
-          require("telescope.themes").get_dropdown({}),
+        fzf = {
+          fuzzy = true,
+          override_generic_sorter = true,
+          override_file_sorter = true,
+          case_mode = "smart_case",
         },
+        ["ui-select"] = themes.get_dropdown({}),
       },
-    })
-    
-    -- We still need to load the ui-select extension
-    telescope.load_extension("ui-select")
+    }
+  end,
+  config = function(_, opts)
+    local telescope = require("telescope")
+    telescope.setup(opts)
+    pcall(telescope.load_extension, "fzf")
+    pcall(telescope.load_extension, "ui-select")
+    pcall(telescope.load_extension, "projects") -- from project.nvim
   end,
 }

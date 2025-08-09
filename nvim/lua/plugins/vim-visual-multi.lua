@@ -1,5 +1,6 @@
 return {
   "mg979/vim-visual-multi",
+  keys = { "<C-d>" },
   init = function()
     vim.g.VM_sublime_mappings = true
     vim.g.VM_default_mappings = false

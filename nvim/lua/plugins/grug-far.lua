@@ -1,5 +1,5 @@
 return {
   "MagicDuck/grug-far.nvim",
-  lazy = false,
-  config = true,
+  cmd = "GrugFar",
+  keys = { {"<leader>g", "<cmd>GrugFar<CR>", desc = "Grug" } },
 }
