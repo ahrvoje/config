@@ -26,5 +26,15 @@ return {
       inc_rename = false, -- enables an experimental feature for incremental rename
       lsp_doc_border = true, -- add a border to lsp doc hovers
     },
+
+    routes = {
+      {
+        filter = {
+          event = "msg_show",
+          find = "vim%.lsp%..*deprecated",
+        },
+        opts = { skip = true },
+      },
+    },
   },
 }
