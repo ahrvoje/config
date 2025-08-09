@@ -300,8 +300,8 @@ config.keys = {
     { key = 'Space',      mods = 'CTRL|ALT', action = act.ShowTabNavigator },
     
     { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
-    { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(-1) },
-    { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(1) },
+    { key = 'Tab',        mods = 'CTRL|SHIFT',       action = act.ActivateTabRelative(-1) },
+    { key = 'Tab',        mods = 'CTRL', action = act.ActivateTabRelative(1) },
     
     { key = '\'',         mods = 'CTRL|ALT', action = wezterm.action_callback( action_pane_toggle_zoom ) },
     { key = ';',          mods = 'CTRL|ALT', action = wezterm.action_callback( action_alt_pane_toggle_zoom ) },
@@ -321,7 +321,7 @@ config.keys = {
     { key = 'UpArrow',    mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Up' } },
     { key = 'RightArrow', mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Right' } },
     
-    -- key mappings for KeyTable actions and stack
+    -- key mappings for KeyTable stack and actions
     { key = '0', mods = 'CTRL|ALT',
       action = act.Multiple {
         act.ClearKeyTableStack,
