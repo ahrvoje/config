@@ -19,3 +19,7 @@ vim.opt.splitbelow = true
 vim.opt.splitright = true
 vim.opt.termguicolors = true
 vim.opt.signcolumn = "yes" -- Always show sign column to avoid text shift
+
+vim.opt.fixeol = false
+vim.opt.list = true
+vim.opt.listchars = "tab:🡆 ,trail:-,eol:◄"

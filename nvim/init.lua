@@ -10,12 +10,17 @@ vim.cmd [[
 ]]
 
 -- autosave files on focus lost
-vim.cmd [[
-  augroup autosave_buffer
-    au!
-    au FocusLost * if expand('%') != '' | w | endif
-  augroup END
-]]
+local grp = vim.api.nvim_create_augroup("autosave_buffer", { clear = true })
+vim.api.nvim_create_autocmd("FocusLost", {
+  group = grp,
+  callback = function()
+    local buf = vim.api.nvim_get_current_buf()
+    local bo = vim.bo[buf]
+    if bo.buftype ~= "" or not bo.modifiable or bo.readonly then return end
+    if vim.api.nvim_buf_get_name(buf) == "" then return end
+    vim.cmd("silent! update")
+  end,
+})
 
 -- persistent undo across sessions
 vim.opt.undofile = true

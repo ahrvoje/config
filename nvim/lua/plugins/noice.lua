@@ -35,6 +35,13 @@ return {
         },
         opts = { skip = true },
       },
+      {
+        filter = {
+          event = "msg_show",
+          find = "vim%.tbl_islist.*deprecated",
+        },
+        opts = { skip = true },
+      },
     },
   },
 }
