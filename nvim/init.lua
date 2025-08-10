@@ -47,10 +47,13 @@ require("lazy").setup("plugins")
 require("config.options")
 require("config.keymaps")
 
--- Virtual EOF marker based on actual ending + newline style
--- Windows = CRLF (\r\n), POSIX = LF-only (\n), EOF = no newline at EOF or other endings
+-- Virtual EOF marker based on actual ending
+--   dos = CRLF (\r\n)
+--   unix = LF-only (\n)
+--   mac = CR-only (\r)
+--   EOF = no newline at EOF or other endings
 
--- Define custom red highlight for EOF marker
+-- custom highlights
 vim.api.nvim_set_hl(0, "dos",  { fg = "#0066FF", bold = true })
 vim.api.nvim_set_hl(0, "unix", { fg = "#EEEE00", bold = true })
 vim.api.nvim_set_hl(0, "mac",  { fg = "#00FF00", bold = true })
