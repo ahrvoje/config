@@ -35,7 +35,16 @@ return {
           'filename',
           path = 2, -- 0 = just filename, 1 = relative path, 2 = absolute path
         }},
-        lualine_x = {'encoding', 'fileformat', 'filetype', 'filesize'},
+        lualine_x = {
+          {
+            -- indicate no EOF newline is present as expected
+            function()
+              if vim.bo.eol then return '' else return '[No EOF]' end
+            end,
+            color = { fg = '#FFAAAA', gui = 'bold' }
+          },
+          'encoding', 'fileformat', 'filetype', 'filesize'
+        },
         lualine_y = {'progress'},
         lualine_z = {'location'}
       },

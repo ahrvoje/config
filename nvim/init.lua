@@ -65,7 +65,7 @@ do
   local function marker_for(bufnr)
     local bo = vim.bo[bufnr]
     if bo.endofline == false then
-      return "∎", "EOF"
+      return "X", "EOF"
     end
     if bo.fileformat == "dos" then
       return "█", "dos"
@@ -74,7 +74,7 @@ do
     elseif bo.fileformat == "mac" then
       return "⬤", "mac"
     else
-      return "∎", "EOF"
+      return "X", "EOF"
     end
   end
 
