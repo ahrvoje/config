@@ -19,4 +19,8 @@ vim.keymap.set("n", "<S-Tab>", "<cmd>tabp<CR>", { desc = "Previous tab" })
 vim.keymap.set("n", "<leader>w", "<cmd>setlocal wrap!<CR>", { desc = "Toggle wrap / nowrap" })
 vim.keymap.set("n", "<leader>e", "<cmd>setlocal noendofline!<CR>", { desc = "Toggle EOF" })
 
+vim.keymap.set("n", "<leader>nd", "<cmd>setlocal ff=dos<CR>",  { desc = "DOS format" })
+vim.keymap.set("n", "<leader>nu", "<cmd>setlocal ff=unix<CR>", { desc = "Unix format" })
+vim.keymap.set("n", "<leader>nm", "<cmd>setlocal ff=mac<CR>",  { desc = "Mac format" })
+
 vim.keymap.set("n", "<Esc>", ":nohlsearch<CR>", { silent = true, desc = "Clear search highlight" })

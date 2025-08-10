@@ -11,6 +11,7 @@ return {
     wk.add({
       { "<leader>b", group = "Bookmarks" },
       { "<leader>f", group = "Telescope" },
+      { "<leader>n", group = "EOL format" },
       { "<leader>q", group = "Persistence" },
     })
   end,
