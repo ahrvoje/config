@@ -1,6 +1,9 @@
 vim.g.mapleader = "\\"
 vim.g.maplocalleader = "\\"
 
+vim.opt.fileformats = { "dos", "unix", "mac" } -- detection order
+vim.opt.fixeol = false
+
 -- highlight on yank
 vim.cmd [[
   augroup YankHighlight
@@ -48,9 +51,10 @@ require("config.keymaps")
 -- Windows = CRLF (\r\n), POSIX = LF-only (\n), EOF = no newline at EOF or other endings
 
 -- Define custom red highlight for EOF marker
-vim.api.nvim_set_hl(0, "Windows",   { fg = "#0066FF", bold = true })
-vim.api.nvim_set_hl(0, "POSIX",     { fg = "#EEEE00", bold = true })
-vim.api.nvim_set_hl(0, "EOFMarker", { fg = "#FF0000", bold = true })
+vim.api.nvim_set_hl(0, "dos",  { fg = "#0066FF", bold = true })
+vim.api.nvim_set_hl(0, "unix", { fg = "#EEEE00", bold = true })
+vim.api.nvim_set_hl(0, "mac",  { fg = "#00FF00", bold = true })
+vim.api.nvim_set_hl(0, "EOF",  { fg = "#FF0000", bold = true })
 
 do
   local ns = vim.api.nvim_create_namespace("file_end_marker")
@@ -58,14 +62,16 @@ do
   local function marker_for(bufnr)
     local bo = vim.bo[bufnr]
     if bo.endofline == false then
-      return "∎", "EOFMarker"
+      return "∎", "EOF"
     end
     if bo.fileformat == "dos" then
-      return "█", "Windows"
+      return "█", "dos"
     elseif bo.fileformat == "unix" then
-      return "◣", "POSIX"
+      return "◣", "unix"
+    elseif bo.fileformat == "mac" then
+      return "⬤", "mac"
     else
-      return "∎", "EOFMarker"
+      return "∎", "EOF"
     end
   end
 
