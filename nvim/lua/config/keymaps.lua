@@ -16,6 +16,7 @@ vim.keymap.set("n", "<C-M-l>", "<cmd>rightbelow vsplit<CR>", { desc = "Split pan
 vim.keymap.set("n", "<Tab>",   "<cmd>tabn<CR>", { desc = "Next tab" })
 vim.keymap.set("n", "<S-Tab>", "<cmd>tabp<CR>", { desc = "Previous tab" })
 
-vim.keymap.set("n", "<leader>w", "<cmd>set wrap!<CR>", { desc = "Toggle wrap / nowrap" })
+vim.keymap.set("n", "<leader>w", "<cmd>setlocal wrap!<CR>", { desc = "Toggle wrap / nowrap" })
+vim.keymap.set("n", "<leader>e", "<cmd>setlocal noendofline!<CR>", { desc = "Toggle EOF" })
 
 vim.keymap.set("n", "<Esc>", ":nohlsearch<CR>", { silent = true, desc = "Clear search highlight" })
