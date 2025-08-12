@@ -3,7 +3,7 @@ return {
   build = ":TSUpdate",
   opts = {
     ensure_installed = {
-      "bash","c","cpp","diff","html","javascript","json","julia","lua","markdown",
+      "bash","c","cpp","diff","go","html","javascript","json","julia","lua","markdown",
       "python","rust","toml","typescript","vim","vimdoc","xml","yaml","zig","csv",
     },
     sync_install = false,

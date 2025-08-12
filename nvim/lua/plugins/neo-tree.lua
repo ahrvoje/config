@@ -8,5 +8,23 @@ return {
   },
   cmd = "Neotree",
   keys = { { "<leader>t", "<cmd>Neotree toggle<CR>", desc = "Toggle neo-tree" } },
-  filesystem = { follow_current_file = { enabled = true } },
+  opts = {
+    filesystem = {
+      follow_current_file = {
+        enabled = true,
+      },
+
+      filtered_items = {
+        visible = false,
+        hide_dotfiles = false,
+        hide_gitignored = false,
+        hide_hidden = false,
+
+        always_show = {
+          ".config",
+          ".zshrc",
+        }
+      },
+    },
+  },
 }

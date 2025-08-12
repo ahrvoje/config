@@ -18,16 +18,18 @@ config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
 config.check_for_updates = false
 config.disable_default_key_bindings = true
-config.font = wezterm.font 'Consolas'
-config.font_size = 11
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.initial_cols = 124
 config.initial_rows = 36
-config.leader = { key = '`', mods = 'ALT', timeout_milliseconds = 9999 }
 config.show_close_tab_button_in_tabs = false
 config.window_decorations = 'RESIZE'
 config.window_frame = { font_size = 12 }
 
+if wezterm.target_triple:match('windows') then
+  config.leader = { key = '`', mods = 'ALT', timeout_milliseconds = 9999 }
+elseif wezterm.target_triple:match('darwin') then
+  config.leader = { key = '“', mods = 'SUPER', timeout_milliseconds = 9999 }
+end
 
 -- Selection of dark themes with acceptable contrast
 --
@@ -201,6 +203,10 @@ action_clear_screen = function(window, pane)
   if shell == 'bash' or shell == 'wslhost' then
     window:perform_action(act.SendString ( 'printf \'\\033c\\e[3J\'\r' ), pane)
   end
+
+  if shell == 'zsh' then
+    window:perform_action(act.SendString ( 'clear\r' ), pane)
+  end
 end
 
 ----------------------------------------------------------------------------------
@@ -294,6 +300,7 @@ end
 config.keys = {
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
+    { key = 'Enter',      mods = 'LEADER', action = wezterm.action_callback( action_clear_screen ) },
     
     { key = 'Enter',      mods = 'CTRL|ALT', action = act.ShowLauncher },
     { key = 'Backspace',  mods = 'CTRL|ALT', action = act.ShowDebugOverlay },
@@ -372,11 +379,19 @@ config.key_tables = {
     { key = 'Home',      mods = 'NONE',       action = wezterm.action_callback( action_home ) },
     { key = 'UpArrow',   mods = 'NONE',       action = wezterm.action_callback( action_up ) },
     { key = 'DownArrow', mods = 'NONE',       action = wezterm.action_callback( action_down ) },
-    { key = 'Enter',     mods = 'LEADER',     action = wezterm.action_callback( action_clear_screen ) },
   },
   
   nvim = {},
 }
+
+if wezterm.target_triple:match('darwin') then
+  -- Mac, make sure CTRL+1..9 pass through to shell as they are character keys
+  for k = 1,9 do
+    table.insert(config.keys, { key = tostring(k), mods = "CTRL", action = act.SendKey( { key = tostring(k), mods="CTRL" }) })
+  end
+  -- make sure CMD+q is pass through as it is used as nvim leader
+    table.insert(config.keys, { key = 'q', mods = 'SUPER', action = act.SendKey( { key = 'q', mods='SUPER' }) })
+end
 
 -- Local key macros loaded from local configuration
 if local_config and local_config['keys'] then
@@ -501,9 +516,13 @@ wezterm.on('update-right-status', function(window, pane)
     return
   end
   
-  -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
-  -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-  unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
+  if wezterm.target_triple:match('windows') then
+    -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
+    -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
+    unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
+  else
+    unix_time = process_info.start_time;
+  end
   
   -- Format top status
   --------------------
@@ -573,7 +592,18 @@ wezterm.on('gui-startup', function(cmd)
 end)
 
 -- Default program
+if wezterm.target_triple:match('darwin') then
+  config.font_size = 14
+  
+  config.set_environment_variables = {
+    prompt = '%F{green}%~%f %F{white}>>>%f ',
+  }
+end
+
 if wezterm.target_triple:match('windows') then
+  config.font = wezterm.font 'Consolas'
+  config.font_size = 12
+
   config.set_environment_variables = {
     prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
   }
@@ -597,3 +627,4 @@ return config
 -- get gui window, active pane, active pane title:
 --
 --     > wezterm['mux']['all_windows']()[1]:gui_window():active_pane():get_title()
+--     > wezterm['mux']['all_windows']()[1]:gui_window():active_pane()::get_foreground_process_info()

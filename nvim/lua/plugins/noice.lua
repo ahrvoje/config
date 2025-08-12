@@ -1,6 +1,5 @@
 return {
   "folke/noice.nvim",
-  event = "VeryLazy",
   dependencies = {
     -- if you lazy-load any of these, make sure to add `event = "VeryLazy"` for them
     "MunifTanjim/nui.nvim",
@@ -30,15 +29,8 @@ return {
     routes = {
       {
         filter = {
-          event = "msg_show",
+          any = { { event = "msg_show" }, { event = "notify" } },
           find = "vim%.lsp%..*deprecated",
-        },
-        opts = { skip = true },
-      },
-      {
-        filter = {
-          event = "msg_show",
-          find = "vim%.tbl_islist.*deprecated",
         },
         opts = { skip = true },
       },

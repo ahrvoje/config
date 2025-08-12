@@ -1,8 +1,18 @@
-vim.g.mapleader = "\\"
-vim.g.maplocalleader = "\\"
+vim.g.mapleader = " "
+vim.g.maplocalleader = " "
 
 vim.opt.fileformats = { "dos", "unix", "mac" } -- detection order
 vim.opt.fixeol = false
+
+-- Replace deprecated LSP API with modern equivalent *before* plugins load
+do
+  if vim.lsp and vim.lsp.buf_get_clients and vim.lsp.get_clients then
+    vim.lsp.buf_get_clients = function(bufnr)
+      bufnr = bufnr or 0
+      return vim.lsp.get_clients({ buf = bufnr })
+    end
+  end
+end
 
 -- highlight on yank
 vim.cmd [[
