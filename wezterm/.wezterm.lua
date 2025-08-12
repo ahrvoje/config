@@ -262,6 +262,17 @@ action_alt_pane_toggle_zoom = function(window, pane)
   end
 end
 
+-- 'Esc' - Clear the line
+action_clear_line = function(window, pane)
+  if wezterm.target_triple:match("windows") then
+    -- In Windows cmd.exe, send Esc to cancel line
+    window:perform_action(act.SendString('\x1b'), pane)
+  else
+    -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
+    window:perform_action(act.SendString('\x01\x0b'), pane)
+  end
+end
+
 action_send_to_alt_pane = function(window, pane)
   text = window:get_selection_text_for_pane(pane)
 
@@ -298,6 +309,8 @@ end
 
 ----------------------------------------------------------------------------------
 config.keys = {
+    { key = 'Escape',     mods = '',       action = wezterm.action_callback( action_clear_line ) },
+    
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
     { key = 'Enter',      mods = 'LEADER', action = wezterm.action_callback( action_clear_screen ) },
