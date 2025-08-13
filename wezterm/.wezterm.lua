@@ -19,11 +19,15 @@ config.audible_bell = 'Disabled'
 config.check_for_updates = false
 config.disable_default_key_bindings = true
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
+config.scrollback_lines = 200000
 config.initial_cols = 124
 config.initial_rows = 36
 config.show_close_tab_button_in_tabs = false
 config.window_decorations = 'RESIZE'
 config.window_frame = { font_size = 12 }
+
+config.animation_fps = 120
+config.max_fps = 120
 
 if wezterm.target_triple:match('windows') then
   config.leader = { key = '`', mods = 'ALT', timeout_milliseconds = 9999 }
@@ -63,15 +67,10 @@ function get_rootname(s)
 end
 
 get_process_name = function(pane)
-  if pane == nil then
-    return nil
-  end
-
-  name = pane:get_foreground_process_name()
-  
+  ok, name = pcall(pane.get_foreground_process_name, pane)
   -- this case covers lua debug overlay and TabNavigator
-  if name == nil then
-    return nil
+  if not ok or not name then
+    return 'wezterm-gui'
   end
   
   return get_rootname(name)
@@ -87,10 +86,9 @@ end
 get_shell = function(pane)
   local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8, nvim = 9 }
   
-  process_name = get_process_name(pane)
-  
-  -- this case covers lua debug overlay and TabNavigator
-  if not process_name then
+  process_name = get_process_name(pane):lower()
+  -- this case covers lua debug overlay, Launcher, TabNavigator
+  if process_name == 'wezterm-gui' then
     return process_name
   end
   
@@ -98,13 +96,17 @@ get_shell = function(pane)
     return process_name
   end
   
-  process_info = pane:get_foreground_process_info()
+  ok, process_info = pcall(pane.get_foreground_process_info, pane)
+  if not ok or not process_info then
+    -- this case covers lua debug overlay, Launcher, TabNavigator
+    return 'wezterm-gui'
+  end
   
-  if (process_name == 'python') and (#(process_info.argv) == 1) then
+  if ((process_name == 'python') or (process_name == 'python3')) and (#(process_info.argv) == 1) then
     return 'python'
   end
 
-  if (process_name == 'python') and (#(process_info.argv) == 2) and (process_info.argv[2]:match('ptpython')) then
+  if ((process_name == 'python') or (process_name == 'python3')) and (#(process_info.argv) == 2) and (process_info.argv[2]:match('ptpython')) then
     return 'ptpython'
   end
   
@@ -133,12 +135,16 @@ end
 action_exit_shell = function(window, pane)
   if get_shell(pane) == 'python' then
     window:perform_action(act.SendString 'exit()\r', pane)
+
   elseif get_shell(pane) == 'ptpython' then
     window:perform_action(act.SendString 'exit()\n', pane)
+
   elseif get_shell(pane) == 'powershell' then
     window:perform_action(act.SendString 'exit\r', pane)
+
   elseif get_shell(pane) == 'cmd' then
     window:perform_action(act.SendString 'exit\r', pane)
+
   else
     window:perform_action(act.SendKey { key='d', mods='CTRL' }, pane)
   end
@@ -147,8 +153,12 @@ end
 ----------------------------------------------------------------------------------
 -- 'Ctrl+Shift+L' log current process info into debug overlay
 action_log_process = function(window, pane)
-  process_info = pane:get_foreground_process_info()
-  wezterm.log_info(process_info)
+  ok, process_info = pcall(pane.get_foreground_process_info, pane)
+  if not ok or not process_info then
+    wezterm.log_info('wezterm overlay')
+  else
+    wezterm.log_info(process_info)
+  end
 end
 
 ----------------------------------------------------------------------------------
@@ -200,24 +210,31 @@ action_clear_screen = function(window, pane)
     window:perform_action(act.SendKey { key = 'L', mods = 'CTRL' }, pane)
   end
   
-  if shell == 'bash' or shell == 'wslhost' then
-    window:perform_action(act.SendString ( 'printf \'\\033c\\e[3J\'\r' ), pane)
-  end
-
-  if shell == 'zsh' then
-    window:perform_action(act.SendString ( 'clear\r' ), pane)
+  if shell == 'bash' or shell == 'wslhost' or shell == 'zsh' then
+    -- In Bash/Zsh/etc., send terminal reset aka RIS
+    window:perform_action(act.SendString('\x1bc'), pane)
+    window:perform_action(act.ClearScrollback 'ScrollbackAndViewport', pane)
   end
 end
 
 ----------------------------------------------------------------------------------
 -- 'LEADER + k' - Kill Process action
 action_kill_process = function(window, pane)
-  process_info = pane:get_foreground_process_info()
+  ok, process_info = pcall(pane.get_foreground_process_info, pane)
+  if not ok or not process_info then
+    return
+  end
+
+  pid = process_info.pid
   
   if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
-    os.execute('tskill ' .. process_info.pid)
+    os.execute(('taskkill /PID %d /T'):format(pid))  -- no /F first
+    wezterm.sleep_ms(500)
+    os.execute(('taskkill /PID %d /T /F'):format(pid))
   else
-    os.execute('kill -9 ' .. process_info.pid)
+    os.execute(('kill %d'):format(pid))
+    wezterm.sleep_ms(500)
+    os.execute(('kill -9 %d'):format(pid))
   end
 end
 
@@ -263,16 +280,58 @@ action_alt_pane_toggle_zoom = function(window, pane)
 end
 
 -- 'Esc' - Clear the line
+line_is_empty = function (pane)
+  local dims = pane:get_dimensions()
+
+  -- bottom visible line index
+  local start = dims.scrollback_rows + dims.viewport_rows - 1
+  local text = pane:get_lines_as_text(start, 1) or ""
+  text = text:gsub("%s+$","")  -- trim trailing spaces
+
+  -- very conservative: empty or just a prompt-ish ending
+  if text == "" then
+    return true
+  end
+
+  -- common prompt terminators
+  if text:match("[%]%$#>~]$") then
+    return true
+  end
+
+  return false
+end
+
 action_clear_line = function(window, pane)
+  -- cancel leader if active
+  if window:leader_is_active() then
+    window:perform_action(act.SendKey{key="Escape"}, pane)
+    return
+  end
+
+  -- exit overlay if active
+  ok, process_info = pcall(pane.get_foreground_process_info, pane)
+  if not ok or not process_info then
+    window:perform_action(act.SendKey{ key="Escape" }, pane)
+    return
+ end
+
+  -- send Esc if line is empty
+  if line_is_empty(pane) then
+    window:perform_action(act.SendKey{ key="Escape" }, pane)
+    return
+  end
+
+  -- last option is to clear line
   if wezterm.target_triple:match("windows") then
     -- In Windows cmd.exe, send Esc to cancel line
     window:perform_action(act.SendString('\x1b'), pane)
   else
-    -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
+   -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
     window:perform_action(act.SendString('\x01\x0b'), pane)
   end
 end
 
+-- Send selected text to pane running alt screen
 action_send_to_alt_pane = function(window, pane)
   text = window:get_selection_text_for_pane(pane)
 
@@ -309,19 +368,19 @@ end
 
 ----------------------------------------------------------------------------------
 config.keys = {
-    { key = 'Escape',     mods = '',       action = wezterm.action_callback( action_clear_line ) },
-    
+    { key = 'Enter',      mods = 'LEADER', action = act.ShowLauncher },
+    { key = 'Backspace',  mods = 'LEADER', action = act.ShowDebugOverlay },
+    { key = 'Space',      mods = 'LEADER', action = act.ShowTabNavigator },
+
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
-    { key = 'Enter',      mods = 'LEADER', action = wezterm.action_callback( action_clear_screen ) },
-    
-    { key = 'Enter',      mods = 'CTRL|ALT', action = act.ShowLauncher },
-    { key = 'Backspace',  mods = 'CTRL|ALT', action = act.ShowDebugOverlay },
-    { key = 'Space',      mods = 'CTRL|ALT', action = act.ShowTabNavigator },
+
+    { key = 'Enter',      mods = 'CTRL|ALT', action = wezterm.action_callback( action_clear_screen ) },
+    { key = 'Escape',     mods = '',         action = wezterm.action_callback( action_clear_line ) },
     
     { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
-    { key = 'Tab',        mods = 'CTRL|SHIFT',       action = act.ActivateTabRelative(-1) },
-    { key = 'Tab',        mods = 'CTRL', action = act.ActivateTabRelative(1) },
+    { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
+    { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(1) },
     
     { key = '\'',         mods = 'CTRL|ALT', action = wezterm.action_callback( action_pane_toggle_zoom ) },
     { key = ';',          mods = 'CTRL|ALT', action = wezterm.action_callback( action_alt_pane_toggle_zoom ) },
@@ -484,9 +543,12 @@ wezterm.on('update-right-status', function(window, pane)
   else
     key_tables_text = ''
   end
-  
-  if get_shell(pane) == '' then
+
+  shell = get_shell(pane)  
+  if not shell or shell == '' then
     running_color = 'rgb(255, 0, 0)'
+  elseif shell == 'wezterm-gui' then
+    running_color = 'rgb(0, 0, 0)'
   else
     running_color = 'rgb(0, 0, 0)'
   end
@@ -522,21 +584,22 @@ wezterm.on('update-right-status', function(window, pane)
 
   -- Process start time  
   ---------------------
-  process_info = pane:get_foreground_process_info();
-  
-  -- this case covers lua debug overlay and TabNavigator
-  if process_info == nil then
-    return
-  end
-  
-  if wezterm.target_triple:match('windows') then
-    -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
-    -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-    unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
+  ok, process_info = pcall(pane.get_foreground_process_info, pane)
+  if not ok or not process_info then
+    -- if overlay like debug or launcher
+    time_status = '-------------------'
   else
-    unix_time = process_info.start_time;
+    if wezterm.target_triple:match('windows') then
+      -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
+      -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
+      unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
+    else
+      unix_time = process_info.start_time;
+    end
+
+    time_status = os.date('%b %d %X', unix_time)
   end
-  
+
   -- Format top status
   --------------------
   window:set_right_status(wezterm.format({
@@ -551,7 +614,7 @@ wezterm.on('update-right-status', function(window, pane)
     { Foreground = { Color = battery_color } },
     { Text = battery_icon .. battery_text .. '' },
     { Foreground = { Color = 'Gray' } },
-    { Text = 'Started: ' .. os.date('%b %d %X', unix_time) .. '      ' },
+    { Text = 'Started: ' .. time_status .. '      ' },
   }))
 end)
 
@@ -562,10 +625,12 @@ icons_names = {
   bash       = { wezterm.nerdfonts.seti_git,         'bash' },
   powershell = { wezterm.nerdfonts.seti_powershell,  'Powershell' },
   python     = { wezterm.nerdfonts.seti_python,      'Python' },
+  python3    = { wezterm.nerdfonts.seti_python,      'Python' },
   cmd        = { wezterm.nerdfonts.cod_terminal,     'Cmd' },
   julia      = { wezterm.nerdfonts.seti_julia,       'Julia' },
   wslhost    = { wezterm.nerdfonts.linux_tux,        'WSL' },
   nu         = { wezterm.nerdfonts.md_chevron_right, 'Nu' },
+  zsh        = { wezterm.nerdfonts.md_percent_box,   'zsh' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   if tab.active_pane.title:match('Copy mode:') then
@@ -573,15 +638,15 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   else
     title_prefix = ''
   end
-  
-  process_name = get_rootname(tab.active_pane.foreground_process_name)
-  
-  -- this case covers lua debug overlay and TabNavigator
-  if process_name == nil then
-    return
+
+  ok, process_name = pcall(get_rootname, tab.active_pane.foreground_process_name)
+  -- this case covers lua debug overlay, Launcher, TabNavigator
+  if not ok or not process_name then
+    process_name = 'wezterm-gui'
   end
-  
-  icon_name = icons_names[process_name] or { wezterm.nerdfonts.oct_question, 'Shell' }
+
+  process_name = process_name:lower()
+  icon_name = icons_names[process_name] or { '', process_name }
   
   return wezterm.format({
     { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] },
