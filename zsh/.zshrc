@@ -2,8 +2,21 @@ path+=(
 	/Applications/WezTerm.app/Contents/MacOS/
 	/Applications/nvim-macos-arm64/bin/
 )
-
 export PATH
+
+alias ..="cd .."
+alias ...="cd ../.."
+alias ....="cd ../../.."
+alias .....="cd ../../../.."
+
+# Print each PATH entry on a separate line
+alias path='echo -e ${PATH//:/\\n}'
+
+# Get week number
+alias week='date +%V'
+
+# Git 
+alias gs='git status'
 
 # Enable parameter/command expansion in prompts
 setopt PROMPT_SUBST
@@ -60,7 +73,7 @@ precmd() {
 
 # Left prompt: full path + optional git branch
 # Use %~ for ~ in $HOME; use %/ for absolute path always.
-PROMPT='%F{cyan}%~%f${git_branch}%f${git_untracked}${git_unstaged}${git_staged} > '
+PROMPT='%F{cyan}%~%f${git_branch}${git_untracked}${git_unstaged}${git_staged} > '
 
 # Right prompt: time
 RPROMPT='%*'
