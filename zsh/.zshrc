@@ -5,9 +5,23 @@ path+=(
 export PATH
 
 # Keep a history of visited directories
-setopt AUTO_PUSHD      # push old dir onto stack on cd
-setopt PUSHD_SILENT    # don't echo stack
-DIRSTACKSIZE=10        # keep 10 recent dirs
+autoload -Uz add-zsh-hook
+
+DIRSTACKFILE="$HOME/.zdirs"  # dirs stack persistent across sessions
+if [[ -f "$DIRSTACKFILE" ]] && (( ${#dirstack} == 0 )); then
+	dirstack=("${(@f)"$(< "$DIRSTACKFILE")"}")
+	[[ -d "${dirstack[1]}" ]] && cd -- "${dirstack[1]}"
+fi
+chpwd_dirstack() {
+	print -l -- "$PWD" "${(u)dirstack[@]}" > "$DIRSTACKFILE"
+}
+add-zsh-hook -Uz chpwd chpwd_dirstack
+
+setopt AUTO_PUSHD          # push old dir onto stack on cd
+setopt PUSHD_SILENT        # don't echo stack
+setopt PUSHD_IGNORE_DUPS
+setopt PUSHD_TO_HOME
+DIRSTACKSIZE=10            # keep 10 recent dirs
 
 alias dirs="dirs -v"  # Print each dir stack entry on a separate line
 alias -- -='cd -'
