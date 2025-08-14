@@ -109,9 +109,32 @@ precmd() {
 	fi
 }
 
-# Left prompt: full path + optional git branch
-# Use %~ for ~ in $HOME; use %/ for absolute path always.
 PROMPT='%F{cyan}%~%f${git_branch}${git_untracked}${git_unstaged}${git_staged} > '
 
 # Right prompt: time
 RPROMPT='%*'
+
+# fzf
+# invoke config if exists
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+
+my_fzf_anywhere_file() {
+  local file
+  zle -I  # release the line editor's grip on the TTY
+
+  # </dev/tty forces TTY stdin so fzf uses its walker
+  # ignore any default FZF_ commands
+  file="$(
+    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+      fzf -i --height=80% --reverse --border \
+          --walker=file,hidden,follow \
+          --walker-root=/ </dev/tty
+  )" || return
+
+  [[ -n $file ]] && LBUFFER+="$file"
+}
+zle -N my_fzf_anywhere_file
+
+# Bind Ctrl-f in both keymaps (adjust to taste)
+bindkey -M emacs '^f' my_fzf_anywhere_file
+bindkey -M viins '^f'  my_fzf_anywhere_file
