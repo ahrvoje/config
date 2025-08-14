@@ -42,6 +42,9 @@ alias ...="cd ../.."
 alias ....="cd ../../.."
 alias .....="cd ../../../.."
 
+# use eza instead of ls
+alias ls='eza -1l'
+
 # Prompt before overwrite
 alias rm='rm -i'
 alias cp='cp -i'
@@ -118,7 +121,7 @@ RPROMPT='%*'
 # invoke config if exists
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
-my_fzf_anywhere_file() {
+fzf_find_file() {
   local file
   zle -I  # release the line editor's grip on the TTY
 
@@ -128,13 +131,57 @@ my_fzf_anywhere_file() {
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
           --walker=file,hidden,follow \
-          --walker-root=/ </dev/tty
+          --walker-root=/ </dev/tty \
+          --preview 'bat --style=numbers --color=always --line-range :200 {} || file -b {}' \
+          --preview-window=right:50%
   )" || return
 
   [[ -n $file ]] && LBUFFER+="$file"
 }
-zle -N my_fzf_anywhere_file
+zle -N fzf_find_file
+# Bind Alt-f in both keymaps (adjust to taste)
+bindkey -M emacs '^[f' fzf_find_file
+bindkey -M viins '^[f' fzf_find_file
 
-# Bind Ctrl-f in both keymaps (adjust to taste)
-bindkey -M emacs '^f' my_fzf_anywhere_file
-bindkey -M viins '^f'  my_fzf_anywhere_file
+fzf_cd() {
+  local dir
+  zle -I  # let full-screen UI take the TTY
+
+  dir="$(
+    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+      command fzf -i --height=80% --reverse --border \
+        --walker=dir,hidden,follow \
+        --walker-root=/ \
+        --prompt='cd> ' \
+        --preview 'ls -la {} 2>/dev/null || echo "{}"' \
+        --preview-window=right:50%:wrap \
+        < /dev/tty
+  )" || return
+
+  [[ -n $dir ]] && builtin cd -- "$dir" && zle reset-prompt
+}
+zle -N fzf_cd
+# bind to Alt+C 
+bindkey -M emacs '^[c' fzf_cd
+bindkey -M viins '^[c' fzf_cd
+
+fzf_history_search() {
+  local cmd
+  zle -I  # release ZLE before full-screen UI
+
+  # Use newest-first, no numbers: much faster and no parsing needed
+  cmd="$(
+    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+      command fzf --height=80% --reverse --border \
+        --prompt='history> ' --no-sort \
+        --preview 'echo {}' --preview-window=down:3:wrap \
+        --query "$LBUFFER" \
+        < <(builtin fc -rln 1)
+  )" || return
+
+  [[ -n $cmd ]] && LBUFFER="$cmd"
+}
+zle -N fzf_history_search
+# bind to Alt-R
+bindkey -M emacs '^[r' fzf_history_search
+bindkey -M viins '^[r' fzf_history_search
