@@ -4,10 +4,34 @@ path+=(
 )
 export PATH
 
+# Keep a history of visited directories
+setopt AUTO_PUSHD      # push old dir onto stack on cd
+setopt PUSHD_SILENT    # don't echo stack
+DIRSTACKSIZE=10        # keep 10 recent dirs
+
+alias dirs="dirs -v"  # Print each dir stack entry on a separate line
+alias -- -='cd -'
+alias -- -0='cd -0'
+alias -- -1='cd -1'
+alias -- -2='cd -2'
+alias -- -3='cd -3'
+alias -- -4='cd -4'
+alias -- -5='cd -5'
+alias -- -6='cd -6'
+alias -- -7='cd -7'
+alias -- -8='cd -8'
+alias -- -9='cd -9'
+
+alias ~="cd ~"
 alias ..="cd .."
 alias ...="cd ../.."
 alias ....="cd ../../.."
 alias .....="cd ../../../.."
+
+# Prompt before overwrite
+alias rm='rm -i'
+alias cp='cp -i'
+alias mv='mv -i'
 
 # Print each PATH entry on a separate line
 alias path='echo -e ${PATH//:/\\n}'
@@ -15,8 +39,8 @@ alias path='echo -e ${PATH//:/\\n}'
 # Get week number
 alias week='date +%V'
 
-# Git 
 alias gs='git status'
+alias grep='grep --color=auto'
 
 # Enable parameter/command expansion in prompts
 setopt PROMPT_SUBST
