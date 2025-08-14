@@ -88,7 +88,7 @@ end
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
 get_shell = function(pane)
-  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8, nvim = 9 }
+  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8, }
   
   process_name = get_process_name(pane):lower()
   -- this case covers lua debug overlay, Launcher, TabNavigator
@@ -212,12 +212,20 @@ action_clear_screen = function(window, pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
     window:perform_action(act.ClearScrollback 'ScrollbackAndViewport', pane)
     window:perform_action(act.SendKey { key = 'L', mods = 'CTRL' }, pane)
+    return
   end
   
-  if shell == 'bash' or shell == 'wslhost' or shell == 'zsh' then
+  if shell == 'bash' or shell == 'wslhost' then
     -- In Bash/Zsh/etc., send terminal reset aka RIS
     window:perform_action(act.SendString('\x1bc'), pane)
     window:perform_action(act.ClearScrollback 'ScrollbackAndViewport', pane)
+    return
+  end
+
+  if shell == 'zsh' then
+    window:perform_action(act.SendString('clear \r'), pane)
+    window:perform_action(act.ClearScrollback 'ScrollbackAndViewport', pane)
+    return
   end
 end
 
@@ -317,7 +325,14 @@ action_clear_line = function(window, pane)
   if not ok or not process_info then
     window:perform_action(act.SendKey{ key="Escape" }, pane)
     return
- end
+  end
+
+  -- if some app running, but not shell, e.g. nvim
+  shell = get_shell(pane)
+  if shell == '' then
+    window:perform_action(act.SendKey{ key="Escape" }, pane)
+    return
+  end
 
   -- send Esc if line is empty
   if line_is_empty(pane) then
@@ -403,7 +418,12 @@ config.keys = {
     { key = 'DownArrow',  mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Down' } },
     { key = 'UpArrow',    mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Up' } },
     { key = 'RightArrow', mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Right' } },
-    
+
+    { key = 'LeftArrow',  mods = 'SUPER', action = act.SendString "\x1bOH" },
+    { key = 'DownArrow',  mods = 'SUPER', action = act.ScrollByPage( 0.5 ) },
+    { key = 'UpArrow',    mods = 'SUPER', action = act.ScrollByPage( -0.5 ) },
+    { key = 'RightArrow', mods = 'SUPER', action = act.SendString "\x1bOF" },
+
     -- key mappings for KeyTable stack and actions
     { key = '0', mods = 'CTRL|ALT',
       action = act.Multiple {
@@ -449,8 +469,6 @@ config.key_tables = {
     
     { key = 'Home',      mods = 'CTRL',       action = act.ScrollToTop },
     { key = 'End',       mods = 'CTRL',       action = act.ScrollToBottom },
-    { key = 'PageUp',    mods = 'NONE',       action = act.ScrollByPage(-0.5) },
-    { key = 'PageDown',  mods = 'NONE',       action = act.ScrollByPage(0.5) },
     
     { key = 'Home',      mods = 'NONE',       action = wezterm.action_callback( action_home ) },
     { key = 'UpArrow',   mods = 'NONE',       action = wezterm.action_callback( action_up ) },
@@ -549,7 +567,7 @@ wezterm.on('update-right-status', function(window, pane)
   end
 
   shell = get_shell(pane)  
-  if not shell or shell == '' then
+  if (not shell or shell == '') and not pane:is_alt_screen_active() then
     running_color = 'rgb(255, 0, 0)'
   elseif shell == 'wezterm-gui' then
     running_color = 'rgb(0, 0, 0)'
@@ -634,7 +652,7 @@ icons_names = {
   julia      = { wezterm.nerdfonts.seti_julia,       'Julia' },
   wslhost    = { wezterm.nerdfonts.linux_tux,        'WSL' },
   nu         = { wezterm.nerdfonts.md_chevron_right, 'Nu' },
-  zsh        = { wezterm.nerdfonts.md_percent_box,   'zsh' },
+  zsh        = { wezterm.nerdfonts.md_percent,   'zsh' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   if tab.active_pane.title:match('Copy mode:') then
@@ -676,10 +694,6 @@ end)
 -- Default program
 if wezterm.target_triple:match('darwin') then
   config.font_size = 14
-  
-  config.set_environment_variables = {
-    prompt = '%F{green}%~%f %F{white}>>>%f ',
-  }
 end
 
 if wezterm.target_triple:match('windows') then

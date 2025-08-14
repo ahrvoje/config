@@ -1,8 +1,4 @@
-path+=(
-	/Applications/WezTerm.app/Contents/MacOS/
-	/Applications/nvim-macos-arm64/bin/
-)
-export PATH
+[ -f $HOME/.zshlocal ] && source $HOME/.zshlocal
 
 # Keep a history of visited directories
 autoload -Uz add-zsh-hook

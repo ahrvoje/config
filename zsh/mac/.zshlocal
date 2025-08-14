@@ -1,0 +1,6 @@
+#!zsh
+path+=(
+	/Applications/WezTerm.app/Contents/MacOS
+	/Applications/nvim-macos-arm64/bin
+)
+export PATH
