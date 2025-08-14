@@ -22,3 +22,5 @@ vim.opt.signcolumn = "yes" -- Always show sign column to avoid text shift
 
 vim.opt.list = true
 vim.opt.listchars = "tab:🡆 ,trail:-,eol:◄"
+
+vim.opt.whichwrap = "b,s,<,>,[,],h,l"
