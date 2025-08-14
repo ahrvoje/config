@@ -1,3 +1,7 @@
+-- neo-tree
+-- oil
+-- project
+-- ezbookmarks
 return {
   {
     "nvim-neo-tree/neo-tree.nvim",

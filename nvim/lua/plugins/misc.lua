@@ -1,3 +1,5 @@
+-- persistence
+-- bufresize
 return {
   {
     "folke/persistence.nvim",
@@ -17,6 +19,7 @@ return {
       pre_save = function()
         -- close sidebars before saving sessions
         pcall(vim.cmd, "Neotree close")
+        pcall(vim.cmd, "Oil close")
       end,
     }
   },

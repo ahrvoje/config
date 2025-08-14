@@ -1,3 +1,6 @@
+-- telescope
+-- grug-far
+-- which-key
 return {
   {
     "nvim-telescope/telescope.nvim",

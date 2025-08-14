@@ -1,3 +1,7 @@
+-- treesitter
+-- vim-visual-multi
+-- gitsigns
+-- undotree
 return {
   {
     "nvim-treesitter/nvim-treesitter",

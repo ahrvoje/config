@@ -1,3 +1,7 @@
+-- catppuccin color scheme
+-- lualine
+-- noice
+-- notify
 return {
   {
     "catppuccin/nvim",
@@ -27,7 +31,10 @@ return {
     config = function()
       require('lualine').setup({
         options = {
+          refresh = { statusline = 50, tabline = 50, winbar = 50 },
           icons_enabled = true,
+          globalstatus = true,
+
           -- The theme of the statusline.
           -- 'auto' will automatically use your colorscheme's lualine theme
           -- if it exists, otherwise it will use 'default'
