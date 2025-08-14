@@ -170,7 +170,6 @@ fzf_history_search() {
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       command fzf --height=80% --reverse --border \
         --prompt='history> ' --no-sort \
-        --preview 'echo {}' --preview-window=down:3:wrap \
         --query "$LBUFFER" \
         < <(builtin fc -rln 1)
   )" || return
