@@ -3,6 +3,7 @@
 -- gitsigns
 -- undotree
 -- vim-sleuth
+-- nvim-autopairs
 return {
   {
     "nvim-treesitter/nvim-treesitter",
@@ -59,5 +60,12 @@ return {
   },
   {
     'tpope/vim-sleuth',
+  },
+  {
+    'windwp/nvim-autopairs',
+    event = "InsertEnter",
+    config = true
+    -- use opts = {} for passing setup options
+    -- this is equivalent to setup({}) function
   },
 }
