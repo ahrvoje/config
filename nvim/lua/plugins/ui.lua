@@ -120,6 +120,14 @@ return {
           },
           opts = { skip = true },
         },
+        {
+          -- inhibit EPERM error during Oil preview
+          filter = {
+            any = { { event = "msg_show" }, { event = "notify" } },
+            find = "EPERM",
+          },
+          opts = { skip = true },
+        },
       },
     },
   },
