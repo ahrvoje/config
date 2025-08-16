@@ -330,20 +330,23 @@ action_clear_line = function(window, pane)
   -- if some app running, but not shell, e.g. nvim
   shell = get_shell(pane)
   if shell == '' then
-    window:perform_action(act.SendKey{ key="Escape" }, pane)
+    -- there were problems with sending both key "Escape" and string "0x1B" directly
+    -- Ctrl+[ is old portable terminal trick for sending Esc char 0x1B
+    -- apparently Ctrl shaves off high bit of [ char 0x5B leaving 0x1B
+    window:perform_action(act.SendKey{ key="[", mods="CTRL" }, pane)
     return
   end
 
   -- send Esc if line is empty
   if line_is_empty(pane) then
-    window:perform_action(act.SendKey{ key="Escape" }, pane)
+    window:perform_action(act.SendKey{ key="[", mods="CTRL" }, pane)
     return
   end
 
   -- last option is to clear line
   if wezterm.target_triple:match("windows") then
-    -- In Windows cmd.exe, send Esc to cancel line
-    window:perform_action(act.SendString('\x1b'), pane)
+    -- In Windows cmd.exe this is clear line code, maybe more portable
+    window:perform_action(act.SendString('\x15'), pane)
   else
    -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
     window:perform_action(act.SendString('\x01\x0b'), pane)
