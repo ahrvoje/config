@@ -1,0 +1,11 @@
+#!zsh
+path+=(
+    /usr/bin/
+    /mingw64/bin/
+    /mingw64/include/
+    /mingw64/lib/
+    /c/Program\ Files/Git/bin/
+    /c/Program\ Files/WezTerm/
+    /c/Users/H/AppData/Local/Programs/utils/nvim/bin/
+)
+export PATH

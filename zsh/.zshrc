@@ -1,4 +1,12 @@
+#!zsh
+
 [ -f $HOME/.zshlocal ] && source $HOME/.zshlocal
+
+
+# History file and size
+HISTFILE=$HOME/.zsh_history
+HISTSIZE=100000
+SAVEHIST=100000
 
 # Keep a history of visited directories
 autoload -Uz add-zsh-hook
@@ -18,6 +26,7 @@ setopt PUSHD_SILENT        # don't echo stack
 setopt PUSHD_IGNORE_DUPS
 setopt PUSHD_TO_HOME
 DIRSTACKSIZE=10            # keep 10 recent dirs
+
 
 alias dirs="dirs -v"  # Print each dir stack entry on a separate line
 alias -- -='cd -'
@@ -39,7 +48,7 @@ alias ....="cd ../../.."
 alias .....="cd ../../../.."
 
 # use eza instead of ls
-alias ls='eza -1l'
+alias ls='eza -1laa'
 
 # Prompt before overwrite
 alias rm='rm -i'
@@ -145,7 +154,7 @@ fzf_cd() {
 
   dir="$(
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
-      command fzf -i --height=80% --reverse --border \
+      fzf -i --height=80% --reverse --border \
         --walker=dir,hidden,follow \
         --walker-root=/ \
         --prompt='cd> ' \
@@ -168,7 +177,7 @@ fzf_history_search() {
   # Use newest-first, no numbers: much faster and no parsing needed
   cmd="$(
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
-      command fzf --height=80% --reverse --border \
+      fzf --height=80% --reverse --border \
         --prompt='history> ' --no-sort \
         --query "$LBUFFER" \
         < <(builtin fc -rln 1)
