@@ -393,10 +393,10 @@ config.keys = {
     { key = 'Enter',      mods = 'LEADER', action = act.ShowLauncher },
     { key = 'Backspace',  mods = 'LEADER', action = act.ShowDebugOverlay },
     { key = 'Space',      mods = 'LEADER', action = act.ShowTabNavigator },
-
+    
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
-
+    
     { key = 'Enter',      mods = 'CTRL|ALT', action = wezterm.action_callback( action_clear_screen ) },
     { key = 'Escape',     mods = '',         action = wezterm.action_callback( action_clear_line ) },
     
@@ -421,12 +421,12 @@ config.keys = {
     { key = 'DownArrow',  mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Down' } },
     { key = 'UpArrow',    mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Up' } },
     { key = 'RightArrow', mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Right' } },
-
+    
     { key = 'LeftArrow',  mods = 'SUPER', action = act.SendString "\x1bOH" },
     { key = 'DownArrow',  mods = 'SUPER', action = act.ScrollByPage( 0.5 ) },
     { key = 'UpArrow',    mods = 'SUPER', action = act.ScrollByPage( -0.5 ) },
     { key = 'RightArrow', mods = 'SUPER', action = act.SendString "\x1bOF" },
-
+    
     -- key mappings for KeyTable stack and actions
     { key = '0', mods = 'CTRL|ALT',
       action = act.Multiple {
@@ -524,6 +524,11 @@ config.mouse_bindings = {
 local launch_menu = {}
 
 if wezterm.target_triple:match('windows') then
+  table.insert(launch_menu, {
+    label = 'zsh',
+    args = { 'C:/msys64/usr/bin/zsh.exe', '-l' },
+  })
+
   table.insert(launch_menu, {
     label = 'Neovim',
     args = { 'nvim.bat' },
@@ -643,7 +648,6 @@ wezterm.on('update-right-status', function(window, pane)
   }))
 end)
 
-
 -- Format tab title
 icons_names = {
   nvim       = { wezterm.nerdfonts.custom_neovim,    'Neovim' },
@@ -655,7 +659,7 @@ icons_names = {
   julia      = { wezterm.nerdfonts.seti_julia,       'Julia' },
   wslhost    = { wezterm.nerdfonts.linux_tux,        'WSL' },
   nu         = { wezterm.nerdfonts.md_chevron_right, 'Nu' },
-  zsh        = { wezterm.nerdfonts.md_percent,   'zsh' },
+  zsh        = { wezterm.nerdfonts.md_percent,       'zsh' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   if tab.active_pane.title:match('Copy mode:') then
@@ -663,21 +667,20 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   else
     title_prefix = ''
   end
-
+  
   ok, process_name = pcall(get_rootname, tab.active_pane.foreground_process_name)
   -- this case covers lua debug overlay, Launcher, TabNavigator
   if not ok or not process_name then
     process_name = 'wezterm-gui'
+  else  
+    process_name = process_name:lower()
   end
-
-  process_name = process_name:lower()
-  icon_name = icons_names[process_name] or { '', process_name }
+  icon_name = icons_names[process_name] or { '>', process_name }
   
   return wezterm.format({
     { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] },
   })
 end)
-
 
 -- Startup window position is loaded from local configuration
 wezterm.on('gui-startup', function(cmd)
