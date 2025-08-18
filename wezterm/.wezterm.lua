@@ -105,23 +105,28 @@ local get_shell = function(pane)
   }
 
   process_name, full_name, process_info = get_process_info(pane)
+  if process_info then
+    argv = process_info.argv
+  end
   
   if shells[process_name] then
     return process_name
   end
+  
+  if argv then
+    if ((process_name == 'python') or (process_name == 'python3')) and (#argv == 1) then
+      return 'python'
+    end
+
+    if ((process_name == 'python') or (process_name == 'python3')) and (#argv == 2) and (argv[2]:match('ptpython')) then
+      return 'ptpython'
+    end
     
-  if ((process_name == 'python') or (process_name == 'python3')) and (#(process_info.argv) == 1) then
-    return 'python'
+    if (process_name == 'julia') and (#argv == 1) then
+      return 'julia'
+    end
   end
 
-  if ((process_name == 'python') or (process_name == 'python3')) and (#(process_info.argv) == 2) and (process_info.argv[2]:match('ptpython')) then
-    return 'ptpython'
-  end
-  
-  if (process_name == 'julia') and (#(process_info.argv) == 1) then
-    return 'julia'
-  end
-  
   if full_name:match('msys') and process_name:match('env') then
     return 'msys'
   end
