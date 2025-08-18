@@ -72,14 +72,23 @@ local function get_rootname(s)
   return s:match("([^/\\]+)%.exe$") or s:match("([^/\\]+)$")
 end
 
-local get_process_name = function(pane)
-  ok, name = pcall(pane.get_foreground_process_name, pane)
-  -- this case covers lua debug overlay and TabNavigator
-  if not ok or not name then
-    return 'wezterm-gui'
+local get_process_info = function (pane)
+  if pane.foreground_process_name then
+    ok = true
+    full_name = pane.foreground_process_name
+    info = nil
+  else
+    ok_n, full_name = pcall(pane.get_foreground_process_name, pane)
+    ok_i, info = pcall(pane.get_foreground_process_info, pane)
+  end
+
+  -- this case covers lua debug overlay, Launcher, TabNavigator
+  if not ok_n or not ok_i or not full_name or full_name == '' then
+    return 'wezterm', 'wezterm', 'wezterm'
   end
   
-  return get_rootname(name)
+  full_name = full_name:lower()
+  return get_rootname(full_name), full_name, info
 end
 
 ----------------------------------------------------------------------------------
@@ -90,24 +99,17 @@ end
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
 local get_shell = function(pane)
-  local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8, }
-  
-  process_name = get_process_name(pane):lower()
-  -- this case covers lua debug overlay, Launcher, TabNavigator
-  if process_name == 'wezterm-gui' then
-    return process_name
-  end
+  local shells = {
+    cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6,
+    wslhost = 7, nu = 8, fish = 9, sh = 10, ksh = 11, dash = 12,
+  }
+
+  process_name, full_name, process_info = get_process_info(pane)
   
   if shells[process_name] then
     return process_name
   end
-  
-  ok, process_info = pcall(pane.get_foreground_process_info, pane)
-  if not ok or not process_info then
-    -- this case covers lua debug overlay, Launcher, TabNavigator
-    return 'wezterm-gui'
-  end
-  
+    
   if ((process_name == 'python') or (process_name == 'python3')) and (#(process_info.argv) == 1) then
     return 'python'
   end
@@ -120,7 +122,11 @@ local get_shell = function(pane)
     return 'julia'
   end
   
-  return ''
+  if full_name:match('msys') and process_name:match('env') then
+    return 'msys'
+  end
+  
+  return nil
 end
 
 ----------------------------------------------------------------------------------
@@ -160,8 +166,8 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + l' log current process, pane, and local conf info into debug overlay
 local action_log_process = function(window, pane)
-  ok, process_info = pcall(pane.get_foreground_process_info, pane)
-  if not ok or not process_info then
+  process_name, _, process_info = get_process_info(pane)
+  if process_name == 'wezterm' then
     wezterm.log_info('wezterm overlay')
   else
     wezterm.log_info('Process info: ')
@@ -202,7 +208,7 @@ end
 
 local action_up = function(window, pane)
   shell = get_shell(pane)
-  if shell == nil or shell ~= '' then
+  if not shell or shell ~= '' then
     window:perform_action(act.SendKey{ key='UpArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(-1), pane)
@@ -211,7 +217,7 @@ end
 
 local action_down = function(window, pane)
   shell = get_shell(pane)
-  if shell == nil or shell ~= '' then
+  if not shell or shell ~= '' then
     window:perform_action(act.SendKey{ key='DownArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(1), pane)
@@ -247,8 +253,8 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + k' - Kill Process action
 local action_kill_process = function(window, pane)
-  ok, process_info = pcall(pane.get_foreground_process_info, pane)
-  if not ok or not process_info then
+  process_name, _, process_info = get_process_info(pane)
+  if process_name == 'wezterm' then
     return
   end
 
@@ -333,8 +339,8 @@ local action_clear_line = function(window, pane)
   end
 
   -- exit overlay if active
-  ok, process_info = pcall(pane.get_foreground_process_info, pane)
-  if not ok or not process_info then
+  process_name, _, _ = get_process_info(pane)
+  if process_name == 'wezterm' then
     window:perform_action(act.SendKey{ key='Escape' }, pane)
     return
   end
@@ -342,7 +348,7 @@ local action_clear_line = function(window, pane)
   shell = get_shell(pane)
 
   -- if some app running, but not shell, e.g. nvim
-  if shell == '' then
+  if not shell then
     -- there were problems with sending key "Escape" or string "0x1B" directly
     -- Ctrl+[ is old portable terminal trick for sending Esc char 0x1B
     -- apparently Ctrl shaves off high bit of [ char 0x5B leaving 0x1B
@@ -559,7 +565,7 @@ local launch_menu = {}
 
 if wezterm.target_triple:match('windows') then
   table.insert(launch_menu, {
-    label = 'zsh',
+    label = 'zsh (msys64)',
     args = { 'C:/msys64/usr/bin/zsh.exe', '-l' },
   })
 
@@ -612,7 +618,9 @@ local format_right_status = function(window, pane)
   end
 
   shell = get_shell(pane)  
-  if (not shell or shell == '') and not pane:is_alt_screen_active() then
+  process_name, _, process_info = get_process_info(pane)
+
+  if not shell and process_name ~= 'wezterm' and not pane:is_alt_screen_active() then
     running_color = 'rgb(255, 0, 0)'
   elseif shell == 'wezterm-gui' then
     running_color = 'rgb(0, 0, 0)'
@@ -651,8 +659,7 @@ local format_right_status = function(window, pane)
 
   -- Process start time  
   ---------------------
-  ok, process_info = pcall(pane.get_foreground_process_info, pane)
-  if not ok or not process_info then
+  if process_name == 'wezterm' then
     -- if overlay like debug or launcher
     time_status = '-------------------'
   else
@@ -713,15 +720,19 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
     title_prefix = ''
   end
   
-  ok, process_name = pcall(get_rootname, tab.active_pane.foreground_process_name)
-  -- this case covers lua debug overlay, Launcher, TabNavigator
-  if not ok or not process_name then
-    process_name = 'wezterm-gui'
-  else  
-    process_name = process_name:lower()
+  process_name, full_name, process_info = get_process_info(active_pane)
+  if process_name == 'wezterm' then
+    -- leave formatting to wezterm
+    return nil
   end
-  icon_name = icons_names[process_name] or { '>', process_name }
-  
+
+  name = get_shell(active_pane)
+  if not name or name == '' then
+    name = process_name
+  end
+
+  icon_name = icons_names[name] or { '>', name }  
+
   return wezterm.format({
     { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. active_pane.pane_id },
   })
