@@ -421,7 +421,12 @@ config.keys = {
     { key = 'F1', mods = 'NONE', action = act.ShowDebugOverlay },
     { key = 'F2', mods = 'NONE', action = act.ShowLauncher },
     { key = 'F3', mods = 'NONE', action = act.ShowTabNavigator },
-    
+    { key = 'F4', mods = 'NONE', action = act.ActivateCommandPalette },
+    { key = 'F5', mods = 'NONE', action = act.CharSelect{ group = 'SmileysAndEmotion' } },
+    { key = 'F6', mods = 'NONE', action = act.CharSelect{ group = 'Objects' } },
+    { key = 'F7', mods = 'NONE', action = act.CharSelect{ group = 'Symbols' } },
+    { key = 'F8', mods = 'NONE', action = act.CharSelect{ group = 'UnicodeNames' } },
+
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'x',          mods = 'LEADER', action = wezterm.action_callback( action_kill_pane ) },
