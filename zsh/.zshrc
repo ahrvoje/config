@@ -152,7 +152,13 @@ RPROMPT='%*'
 # invoke config if exists
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
-fzf_find_file() {
+fzf_root='/'
+# special Windows-specific cases for msys64/usr/bin/zsh.exe
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || -n "$MSYSTEM" ]]; then
+  fzf_root='C:/ D:/'
+fi
+
+fzf_find_file_local() {
   local file
   zle -I  # release the line editor's grip on the TTY
 
@@ -162,17 +168,39 @@ fzf_find_file() {
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
           --walker=file,hidden,follow \
-          --walker-root=/ </dev/tty \
+          --walker-root=. </dev/tty \
           --preview 'bat --style=numbers --color=always --line-range :200 {} || file -b {}' \
           --preview-window=right:50%
   )" || return
 
   [[ -n $file ]] && LBUFFER+="$file"
 }
-zle -N fzf_find_file
-# Bind Alt-f in both keymaps (adjust to taste)
-bindkey -M emacs '^[f' fzf_find_file
-bindkey -M viins '^[f' fzf_find_file
+zle -N fzf_find_file_local
+# Bind Alt-. in both keymaps
+bindkey -M emacs '^[.' fzf_find_file_local
+bindkey -M viins '^[.' fzf_find_file_local
+
+fzf_find_file_global() {
+  local file
+  zle -I  # release the line editor's grip on the TTY
+
+  # </dev/tty forces TTY stdin so fzf uses its walker
+  # ignore any default FZF_ commands
+  file="$(
+    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+      fzf -i --height=80% --reverse --border \
+          --walker=file,hidden,follow \
+          --walker-root="${wr[@]}" </dev/tty \
+          --preview 'bat --style=numbers --color=always --line-range :200 {} || file -b {}' \
+          --preview-window=right:50%
+  )" || return
+
+  [[ -n $file ]] && LBUFFER+="$file"
+}
+zle -N fzf_find_file_global
+# Bind Alt-f in both keymaps
+bindkey -M emacs '^[f' fzf_find_file_global
+bindkey -M viins '^[f' fzf_find_file_global
 
 fzf_cd() {
   local dir
@@ -192,7 +220,7 @@ fzf_cd() {
   [[ -n $dir ]] && builtin cd -- "$dir" && zle reset-prompt
 }
 zle -N fzf_cd
-# bind to Alt+C 
+# Bind to Alt-c 
 bindkey -M emacs '^[c' fzf_cd
 bindkey -M viins '^[c' fzf_cd
 
@@ -212,6 +240,6 @@ fzf_history_search() {
   [[ -n $cmd ]] && LBUFFER="$cmd"
 }
 zle -N fzf_history_search
-# bind to Alt-R
+# Bind to Alt-r
 bindkey -M emacs '^[r' fzf_history_search
 bindkey -M viins '^[r' fzf_history_search
