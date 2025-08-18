@@ -56,8 +56,8 @@ setopt PUSHD_TO_HOME
 DIRSTACKSIZE=10            # keep 10 recent dirs
 
 
-alias dirs="dirs -v"  # Print each dir stack entry on a separate line
 alias -- -='cd -'
+alias -- --='dirs -v'  # Print each dir stack entry on a separate line
 alias -- -0='cd -0'
 alias -- -1='cd -1'
 alias -- -2='cd -2'
