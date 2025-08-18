@@ -599,7 +599,7 @@ config.launch_menu = launch_menu
 -- Top left & right status bar
 local format_left_status = function(window, pane)
   return wezterm.format({
-    { Foreground = { Color = '#CC99AA' } },
+    { Foreground = { Color = '#66AAAA' } },
     { Text = window:active_workspace() },
   })
 end
