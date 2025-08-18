@@ -617,21 +617,25 @@ local format_right_status = function(window, pane)
     key_tables_text = ''
   end
 
-  shell = get_shell(pane)  
   process_name, _, process_info = get_process_info(pane)
+  if process_info then
+    -- process time has to be handled, extracted and cached here
+    -- otherwuse it does not work later for unknown reason
+    process_time = process_info.start_time
+  end
 
-  if not shell and process_name and process_name ~= 'wezterm' and not pane:is_alt_screen_active() then
-    running_color = 'rgb(255, 0, 0)'
-  elseif shell == 'wezterm-gui' then
-    running_color = 'rgb(0, 0, 0)'
+  shell = get_shell(pane)
+  if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
+    running_color = '#000000'
   else
-    running_color = 'rgb(0, 0, 0)'
+    -- show red fire icon for some running process in progress
+    running_color = '#FF0000'
   end
   
   if window:leader_is_active() then
-    leader_color = 'rgb(255, 100, 100)'
+    leader_color = '#FF6060'
   else
-    leader_color = 'rgb(0, 0, 0)'
+    leader_color = '#000000'
   end
 
   -- Battery
@@ -659,19 +663,19 @@ local format_right_status = function(window, pane)
 
   -- Process start time  
   ---------------------
-  if not process_info or not process_info.start_time then
-    -- if overlay like debug or launcher
-    time_status = '-------------------'
+  if not process_time then
+    -- if wezterm overlay like debug or launcher
+    time_status = '------------------------------'
   else
     if wezterm.target_triple:match('windows') then
       -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
       -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-      unix_time = math.floor(process_info.start_time / 10000000 - 134774 * 86400);
+      unix_time = math.floor(process_time / 10000000 - 134774 * 86400);
     else
-      unix_time = process_info.start_time;
+      unix_time = process_time;
     end
 
-    time_status = os.date('%b %d %X', unix_time)
+    time_status = 'Started: ' .. os.date('%b %d %X', unix_time)
   end
 
   -- Format top status
@@ -688,7 +692,7 @@ local format_right_status = function(window, pane)
     { Foreground = { Color = battery_color } },
     { Text = battery_icon .. battery_text .. '' },
     { Foreground = { Color = 'Gray' } },
-    { Text = 'Started: ' .. time_status .. '      ' },
+    { Text = time_status .. '      ' },
   })
 end
 
