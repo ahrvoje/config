@@ -18,6 +18,7 @@ config.adjust_window_size_when_changing_font_size = false
 config.animation_fps = 120
 config.max_fps = 120
 config.audible_bell = 'Disabled'
+config.canonicalize_pasted_newlines = 'CarriageReturnAndLineFeed'
 config.check_for_updates = false
 config.disable_default_key_bindings = true
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
@@ -25,6 +26,7 @@ config.initial_cols = 124
 config.initial_rows = 36
 config.scrollback_lines = 200000
 config.show_close_tab_button_in_tabs = false
+config.status_update_interval = 300
 config.window_decorations = 'RESIZE'
 
 if wezterm.target_triple:match('darwin') then
@@ -61,16 +63,16 @@ config.color_scheme = 'Bright (base16)'
 -- Equivalent to POSIX basename(3)
 -- Given "/foo/bar" returns "bar"
 -- Given "c:\\foo\\bar" returns "bar"
-function get_basename(s)
+local function get_basename(s)
   return string.gsub(s, '(.*[/\\])(.*)', '%2')
 end
 
 -- https://stackoverflow.com/questions/2235173/what-is-the-naming-standard-for-path-components
-function get_rootname(s)
+local function get_rootname(s)
   return s:match("([^/\\]+)%.exe$") or s:match("([^/\\]+)$")
 end
 
-get_process_name = function(pane)
+local get_process_name = function(pane)
   ok, name = pcall(pane.get_foreground_process_name, pane)
   -- this case covers lua debug overlay and TabNavigator
   if not ok or not name then
@@ -87,7 +89,7 @@ end
 --   https://wezfurlong.org/wezterm/config/lua/config/skip_close_confirmation_for_processes_named.html
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
-get_shell = function(pane)
+local get_shell = function(pane)
   local shells = { cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6, wslhost = 7, nu = 8, }
   
   process_name = get_process_name(pane):lower()
@@ -125,7 +127,7 @@ end
 -- 'Ctrl-c' key has two roles:
 --   KeyboardInterrupt if there is no selection
 --   Copy to clipboard if selection is available
-action_ctrl_c = function(window, pane)
+local action_ctrl_c = function(window, pane)
   local sel = window:get_selection_text_for_pane(pane)
   if not sel or sel == '' then
     window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
@@ -136,7 +138,7 @@ end
 
 ----------------------------------------------------------------------------------
 -- 'Ctrl-d' close shell, taking care of special cases like PowerShell, Python...
-action_exit_shell = function(window, pane)
+local action_exit_shell = function(window, pane)
   shell = get_shell(pane) 
   if shell == 'python' then
     window:perform_action(act.SendString 'exit()\r', pane)
@@ -156,19 +158,31 @@ action_exit_shell = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
--- 'Ctrl+Shift+L' log current process info into debug overlay
-action_log_process = function(window, pane)
+-- 'LEADER + l' log current process, pane, and local conf info into debug overlay
+local action_log_process = function(window, pane)
   ok, process_info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not process_info then
     wezterm.log_info('wezterm overlay')
   else
+    wezterm.log_info('Process info: ')
     wezterm.log_info(process_info)
   end
 end
 
-----------------------------------------------------------------------------------
--- 'Ctrl+Shift+C' log local TOML configuration file .wezterm.toml
-action_log_config = function(window, pane)
+local function paneinfo_for_pane(pane)
+  local id = pane:pane_id()
+  for _, info in ipairs(pane:tab():panes_with_info()) do
+    if info.pane:pane_id() == id then return info end
+  end
+end
+
+local action_log_pane_info = function(window, pane)
+  wezterm.log_info('Pane info: ')
+  wezterm.log_info(paneinfo_for_pane(pane))
+end
+
+local action_log_local_config = function(window, pane)
+  wezterm.log_info('Local configuration: ')
   wezterm.log_info(local_config)
 end
 
@@ -176,16 +190,17 @@ end
 -- 'Home'/'Up'/'Down' keys have two roles
 --   Default line-start/history-up/history-down if shell is active
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
-action_home = function(window, pane)
+local action_home = function(window, pane)
   shell = get_shell(pane)
-  if shell == nil or shell ~= '' then
+  if not shell or shell ~= '' then
+    -- wezterm overlay or actual shell (e.g. zsh)
     window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollToTop, pane)
   end
 end
 
-action_up = function(window, pane)
+local action_up = function(window, pane)
   shell = get_shell(pane)
   if shell == nil or shell ~= '' then
     window:perform_action(act.SendKey{ key='UpArrow', mods='NONE' }, pane)
@@ -194,7 +209,7 @@ action_up = function(window, pane)
   end
 end
 
-action_down = function(window, pane)
+local action_down = function(window, pane)
   shell = get_shell(pane)
   if shell == nil or shell ~= '' then
     window:perform_action(act.SendKey{ key='DownArrow', mods='NONE' }, pane)
@@ -205,7 +220,7 @@ end
 
 ----------------------------------------------------------------------------------
 -- 'LEADER + Enter' - Clear screen action
-action_clear_screen = function(window, pane)
+local action_clear_screen = function(window, pane)
   shell = get_shell(pane)
   
   if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' or shell == 'nu' then
@@ -231,7 +246,7 @@ end
 
 ----------------------------------------------------------------------------------
 -- 'LEADER + k' - Kill Process action
-action_kill_process = function(window, pane)
+local action_kill_process = function(window, pane)
   ok, process_info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not process_info then
     return
@@ -252,7 +267,7 @@ end
 
 ----------------------------------------------------------------------------------
 -- 'LEADER + x' - Kill active pane
-action_kill_pane = function(window, pane)
+local action_kill_pane = function(window, pane)
   local id = pane:pane_id()
 
   -- Try nicely (without confirm)
@@ -265,25 +280,8 @@ action_kill_pane = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
--- 'Ctrl + Alt + '' - Pane zoom toggle
-action_pane_toggle_zoom = function(window, pane)
-  tab = window:active_tab()
-  
-  for _, pane_info in ipairs(tab:panes_with_info()) do
-    p = pane_info['pane']
-
-    if pane_info['is_active'] then
-      if pane_info['is_zoomed'] then
-        tab:set_zoomed(false)
-      else
-        tab:set_zoomed(true)
-      end
-    end
-  end
-end
-
 -- 'Ctrl + Alt + ;' - Toggle zoom state of pane running alt screen
-action_alt_pane_toggle_zoom = function(window, pane)
+local action_alt_pane_toggle_zoom = function(window, pane)
   tab = window:active_tab()
   
   for _, pane_info in ipairs(tab:panes_with_info()) do
@@ -306,7 +304,7 @@ action_alt_pane_toggle_zoom = function(window, pane)
 end
 
 -- 'Esc' - Clear the line
-line_is_empty = function (pane)
+local line_is_empty = function (pane)
   local dims = pane:get_dimensions()
 
   -- bottom visible line index
@@ -327,7 +325,7 @@ line_is_empty = function (pane)
   return false
 end
 
-action_clear_line = function(window, pane)
+local action_clear_line = function(window, pane)
   -- cancel leader if active
   if window:leader_is_active() then
     window:perform_action(act.SendKey{ key='Escape' }, pane)
@@ -370,7 +368,7 @@ action_clear_line = function(window, pane)
         act.SendKey{ key='Home', mods='CTRL' },
         act.SendKey{ key='End',  mods='CTRL' },
       }, pane)
-    elseif shell == 'zsh' then
+    elseif shell == 'zsh' or shell == 'wslhost' then
       window:perform_action(act.SendKey{ key='u', mods='CTRL' }, pane)
     end
     
@@ -382,7 +380,7 @@ action_clear_line = function(window, pane)
 end
 
 -- Send selected text to pane running alt screen
-action_send_to_alt_pane = function(window, pane)
+local action_send_to_alt_pane = function(window, pane)
   text = window:get_selection_text_for_pane(pane)
 
   tab = window:active_tab()
@@ -398,21 +396,21 @@ end
 
 ----------------------------------------------------------------------------------
 -- key tables stack icons - clear, add, pop
-key_icons = ''
-clear_key_icons_stack = function(window, pane)
+local key_icons = ''
+local clear_key_icons_stack = function(window, pane)
   key_icons = ''
 end
 
-pop_key_icons_stack = function(window, pane)
+local pop_key_icons_stack = function(window, pane)
   -- unicode icon char size is 3, and there is one space char, so start from char 5 = 3 + 1 + 1
   key_icons = key_icons:sub(3 + 1 + 1, #key_icons)
 end
 
-add_term_key_icon = function(window, pane)
+local add_term_key_icon = function(window, pane)
   key_icons = wezterm.nerdfonts.cod_terminal .. ' ' .. key_icons
 end
 
-add_nvim_key_icon = function(window, pane)
+local add_nvim_key_icon = function(window, pane)
   key_icons = wezterm.nerdfonts.custom_neovim .. ' ' .. key_icons
 end
 
@@ -430,7 +428,12 @@ config.keys = {
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'x',          mods = 'LEADER', action = wezterm.action_callback( action_kill_pane ) },
-    
+    { key = 'l',          mods = 'LEADER', action = act.Multiple {  -- debugging log & info
+      wezterm.action_callback( action_log_process ),
+      wezterm.action_callback( action_log_pane_info ),
+      wezterm.action_callback( action_log_local_config ),
+    }},
+
     { key = 'Enter',      mods = 'CTRL|ALT', action = wezterm.action_callback( action_clear_screen ) },
     { key = 'Escape',     mods = 'NONE',     action = wezterm.action_callback( action_clear_line ) },
     
@@ -438,7 +441,7 @@ config.keys = {
     { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
     { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(1) },
     
-    { key = '\'',         mods = 'CTRL|ALT', action = wezterm.action_callback( action_pane_toggle_zoom ) },
+    { key = '\'',         mods = 'CTRL|ALT', action = act.TogglePaneZoomState },
     { key = ';',          mods = 'CTRL|ALT', action = wezterm.action_callback( action_alt_pane_toggle_zoom ) },
     
     { key = 'LeftArrow',  mods = 'CTRL', action = act.ActivatePaneDirection 'Left' },
@@ -487,10 +490,7 @@ config.key_tables = {
   term = {
     { key = 'w',         mods = 'CTRL',       action = act.CloseCurrentTab{ confirm = true } },
     { key = 'c',         mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_c ) },
-    
-    { key = 'L',         mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_process ) },
-    { key = 'C',         mods = 'CTRL|SHIFT', action = wezterm.action_callback( action_log_config ) },
-    
+        
     { key = '=',         mods = 'CTRL',       action = act.IncreaseFontSize },
     { key = '-',         mods = 'CTRL',       action = act.DecreaseFontSize },
     { key = '0',         mods = 'CTRL',       action = act.ResetFontSize },
@@ -597,11 +597,14 @@ end
 config.launch_menu = launch_menu
 
 -- Top left & right status bar
-wezterm.on('update-status', function(window, pane)
-  window:set_left_status(wezterm.format({}))
-end)
+local format_left_status = function(window, pane)
+  return wezterm.format({
+    { Foreground = { Color = '#CC99AA' } },
+    { Text = window:active_workspace() },
+  })
+end
 
-wezterm.on('update-right-status', function(window, pane)
+local format_right_status = function(window, pane)
   if #key_icons > 0 then
     key_tables_text = 'key tables: '
   else
@@ -666,7 +669,7 @@ wezterm.on('update-right-status', function(window, pane)
 
   -- Format top status
   --------------------
-  window:set_right_status(wezterm.format({
+  return wezterm.format({
     { Foreground = { Color = 'Gray' } },
     { Text = key_tables_text },
     { Foreground = { Color = 'Yellow' } },
@@ -679,7 +682,12 @@ wezterm.on('update-right-status', function(window, pane)
     { Text = battery_icon .. battery_text .. '' },
     { Foreground = { Color = 'Gray' } },
     { Text = 'Started: ' .. time_status .. '      ' },
-  }))
+  })
+end
+
+wezterm.on('update-status', function(window, pane)
+  window:set_left_status(format_left_status(window, pane))
+  window:set_right_status(format_right_status(window, pane))
 end)
 
 -- Format tab title
@@ -761,4 +769,4 @@ return config
 -- get gui window, active pane, active pane title:
 --
 --     > wezterm['mux']['all_windows']()[1]:gui_window():active_pane():get_title()
---     > wezterm['mux']['all_windows']()[1]:gui_window():active_pane()::get_foreground_process_info()
+--     > wezterm['mux']['all_windows']()[1]:gui_window():active_pane():get_foreground_process_info()
