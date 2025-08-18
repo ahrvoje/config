@@ -251,6 +251,20 @@ action_kill_process = function(window, pane)
 end
 
 ----------------------------------------------------------------------------------
+-- 'LEADER + x' - Kill active pane
+action_kill_pane = function(window, pane)
+  local id = pane:pane_id()
+
+  -- Try nicely (without confirm)
+  window:perform_action(wezterm.action.CloseCurrentPane { confirm = false }, pane)
+
+  -- After 200ms delay try a hard kill
+  wezterm.time.call_after(0.2, function()
+    wezterm.run_child_process({ 'wezterm', 'cli', 'kill-pane', '--pane-id', tostring(id) })
+  end)
+end
+
+----------------------------------------------------------------------------------
 -- 'Ctrl + Alt + '' - Pane zoom toggle
 action_pane_toggle_zoom = function(window, pane)
   tab = window:active_tab()
@@ -350,13 +364,11 @@ action_clear_line = function(window, pane)
       -- In Windows cmd.exe this is clear line code, maybe more portable
       window:perform_action( act.SendString( '\x15' ), pane)
     elseif shell == 'pwsh' or shell == 'powershell' then
-      -- In PowerShell 7 go to end, select to beginning and delete entire line
-      -- works in all editing modes (Windows, Emacs, Vi) and without key binds
-      -- which is impoertant due to Constrained Language Mode (CLM)
-      window:perform_action(act.Multiple {
-        act.SendKey{ key='End', mods='' },
-        act.SendKey{ key='Home', mods='SHIFT' },
-        act.SendKey{ key='Delete', mods='' },
+      -- PowerShell 5 & 7, works without PS key bind, w/wo Constrained Language Mode (CLM)
+      -- Ctrl+Home & Ctrl+End delete from cursor to home & end
+      window:perform_action(act.Multiple{
+        act.SendKey{ key='Home', mods='CTRL' },
+        act.SendKey{ key='End',  mods='CTRL' },
       }, pane)
     elseif shell == 'zsh' then
       window:perform_action(act.SendKey{ key='u', mods='CTRL' }, pane)
@@ -366,7 +378,7 @@ action_clear_line = function(window, pane)
   end
 
   -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
-  window:perform_action(act.SendString('\x01\x0b'), pane)
+  window:perform_action(act.SendString( '\x01\x0b' ), pane)
 end
 
 -- Send selected text to pane running alt screen
@@ -410,8 +422,9 @@ config.keys = {
     { key = 'F2', mods = 'NONE', action = act.ShowLauncher },
     { key = 'F3', mods = 'NONE', action = act.ShowTabNavigator },
     
-    { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
+    { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
+    { key = 'x',          mods = 'LEADER', action = wezterm.action_callback( action_kill_pane ) },
     
     { key = 'Enter',      mods = 'CTRL|ALT', action = wezterm.action_callback( action_clear_screen ) },
     { key = 'Escape',     mods = 'NONE',     action = wezterm.action_callback( action_clear_line ) },
@@ -569,7 +582,7 @@ if wezterm.target_triple:match('windows') then
         '--login'
     },
   })
-  
+    
   table.insert(launch_menu, {
     label = 'Nu',
     args = { 'nu.bat' },
@@ -679,7 +692,9 @@ icons_names = {
   zsh        = { wezterm.nerdfonts.md_percent,       'zsh' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
-  if tab.active_pane.title:match('Copy mode:') then
+  active_pane = tab.active_pane
+  
+  if active_pane.title:match('Copy mode:') then
     title_prefix = 'Copy mode: '
   else
     title_prefix = ''
@@ -695,7 +710,7 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   icon_name = icons_names[process_name] or { '>', process_name }
   
   return wezterm.format({
-    { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] },
+    { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. active_pane.pane_id },
   })
 end)
 
@@ -714,7 +729,6 @@ wezterm.on('gui-startup', function(cmd)
   wezterm.mux.spawn_window(cmd or { position = { x = x, y = y } })
 end)
 
--- Default program
 if wezterm.target_triple:match('darwin') then
   config.font_size = 14
 end
@@ -722,10 +736,6 @@ end
 if wezterm.target_triple:match('windows') then
   config.font = wezterm.font 'Consolas'
   config.font_size = 12
-
-  config.set_environment_variables = {
-    prompt = '$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ',
-  }
   
   config.default_prog = {
     'cmd.exe', '/s', '/k',
