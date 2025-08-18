@@ -2,6 +2,34 @@
 
 [ -f $HOME/.zshlocal ] && source $HOME/.zshlocal
 
+# special Windows-specific cases for msys64/usr/bin/zsh.exe
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || -n "$MSYSTEM" ]]; then
+  for map in emacs viins; do
+    # Home key
+    bindkey -M $map '^[[H'  beginning-of-line     # ESC [ H
+    bindkey -M $map '^[OH'  beginning-of-line     # ESC O H
+    bindkey -M $map '^[[1~' beginning-of-line     # ESC [ 1 ~
+  
+    # End key
+    bindkey -M $map '^[[F'  end-of-line           # ESC [ F
+    bindkey -M $map '^[OF'  end-of-line           # ESC O F
+    bindkey -M $map '^[[4~' end-of-line           # ESC [ 4 ~
+  
+    # Delete / PgUp / PgDn keys
+    bindkey -M $map '^[[3~' delete-char           # Delete
+    bindkey -M $map '^[[5~' up-line-or-history    # PageUp
+    bindkey -M $map '^[[6~' down-line-or-history  # PageDown
+
+    # Insert key
+    zmodload zsh/terminfo 2>/dev/null || true
+    bindkey -M $map "${terminfo[kich1]-'^[[2~'}" overwrite-mode
+  done
+  
+  # normalize git conventions matching GitHub Desktop for Windows
+  git config --global core.autocrlf true
+  git config --global core.filemode false
+  git config --global core.ignorecase true
+fi
 
 # History file and size
 HISTFILE=$HOME/.zsh_history
@@ -61,60 +89,58 @@ alias path='echo -e ${PATH//:/\\n}'
 # Get week number
 alias week='date +%V'
 
+alias gd='git diff'
 alias gs='git status'
-alias grep='grep --color=auto'
+alias grep='grep -i --color=auto'
 
 # Enable parameter/command expansion in prompts
 setopt PROMPT_SUBST
 
 # Git branch info
-autoload -Uz vcs_info
-zstyle ':vcs_info:*' enable git
-zstyle ':vcs_info:git:*' formats '%b'
+if [[ $(locale charmap) == "UTF-8" ]]; then
+  GIT_BRANCH_ICON=$'\ue0a0'
+else
+  GIT_BRANCH_ICON='⎇'
+fi
+
 precmd() {
-	if git rev-parse --is-inside-work-tree &>/dev/null; then
-		# Get branch name
-		vcs_info
-		
-		branch_icon="⎇"
-		[[ $(locale charmap) == "UTF-8" ]] && branch_icon=""
-		
-		if [[ -n $vcs_info_msg_0_ ]]; then
-			git_branch=" %F{20}${branch_icon}${vcs_info_msg_0_}%f"  # gray
-		fi
+  git_branch=""
+  git_untracked=""
+  git_unstaged=""
+  git_staged=""
 
-        # Count untracked files ("??" lines)
-        local u_cnt
-        u_cnt=$(git status --porcelain 2>/dev/null | awk '$1=="??"{c++} END{print c+0}')
-        if (( u_cnt > 0 )); then
-            git_untracked=" %F{16}u${u_cnt}%f "  # calm orange
-        else
-            git_untracked=" %F{10}u0%f "  # calm green
-        fi
+  # check if in git repo folder
+  git rev-parse --is-inside-work-tree &>/dev/null || return
 
-        # Count unstaged modified files (2nd status column == 'M')
-        local m_cnt
-        m_cnt=$(git status --porcelain 2>/dev/null | awk 'substr($0,2,1)=="M"{c++} END{print c+0}')
-        if (( m_cnt > 0 )); then
-            git_unstaged="%F{197}m${m_cnt}%f "  # calm red
-        else
-            git_unstaged="%F{10}m0%f "  # calm green
-        fi
+  local out
+  out=$(LC_ALL=C git -c color.status=false status -b --porcelain=1 2>/dev/null) || return
 
-        # Count staged files (1st status column == 'M' or 'A' or 'R' etc.)
-        local s_cnt
-        s_cnt=$(git status --porcelain 2>/dev/null | awk 'substr($0,1,1)!=" " && substr($0,1,1)!="?"{c++} END{print c+0}')
-        if (( s_cnt > 0 )); then
-            git_staged="%F{197}s${s_cnt}%f"  # calm red
-        else
-            git_staged="%F{10}s0%f"  # calm green
-        fi
-    else
-		git_branch=""
-		git_untracked=""
-		git_unstaged=""
-		git_staged=""
-	fi
+  local -a lines
+  lines=("${(@f)out}")
+
+  # Branch name from header
+  local hdr="${lines[1]}"
+  if [[ "$hdr" == "## "* ]]; then
+    local b="${hdr#\#\# }"
+    b="${b%%...*}"
+    b="${b%% *}"
+    git_branch=" %F{20}${GIT_BRANCH_ICON}${b}%f"
+  fi
+
+  local u_cnt=0 m_cnt=0 s_cnt=0
+  local line x y
+  # Count changes
+  for line in "${lines[@]:1}"; do
+    x=${line[1,1]} y=${line[2,2]}
+    [[ $x$y == '??' ]] && ((u_cnt++)) && continue
+    [[ $x != ' ' && $x != '?' ]] && ((s_cnt++))
+    [[ $y == M ]] && ((m_cnt++))
+  done
+
+  # use arithmetic ternary *inside* braces for colors)
+  git_untracked=" %F{$(( u_cnt ? 16 : 10 ))}u${u_cnt}%f "
+  git_unstaged="%F{$(( m_cnt ? 197 : 10 ))}m${m_cnt}%f "
+  git_staged="%F{$(( s_cnt ? 197 : 10 ))}s${s_cnt}%f"
 }
 
 PROMPT='%F{cyan}%~%f${git_branch}${git_untracked}${git_unstaged}${git_staged} > '

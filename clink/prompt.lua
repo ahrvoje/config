@@ -1,9 +1,9 @@
+os.setenv("PROMPT", "$E[92m$P$E[36m $E[93m$+$E[37m$G$G$G$E[0m ")
+
 local p = clink.promptfilter(30)
 
 function p:filter(prompt)
-    -- The :filter() function must be defined.  But if the prompt filter is
-    -- only interested in modifying the right side prompt, then the :filter()
-    -- function may do nothing.
+    prompt
 end
 
 function p:rightfilter(prompt)

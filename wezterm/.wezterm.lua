@@ -211,7 +211,6 @@ action_clear_screen = function(window, pane)
     window:perform_action(act.SendString ( 'cls\r' ), pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
     window:perform_action(act.ClearScrollback 'ScrollbackAndViewport', pane)
-    window:perform_action(act.SendKey { key = 'L', mods = 'CTRL' }, pane)
     return
   end
   
@@ -297,16 +296,16 @@ line_is_empty = function (pane)
 
   -- bottom visible line index
   local start = dims.scrollback_rows + dims.viewport_rows - 1
-  local text = pane:get_lines_as_text(start, 1) or ""
-  text = text:gsub("%s+$","")  -- trim trailing spaces
+  local text = pane:get_lines_as_text(start, 1) or ''
+  text = text:gsub('%s+$', '')  -- trim trailing spaces
 
   -- very conservative: empty or just a prompt-ish ending
-  if text == "" then
+  if text == '' then
     return true
   end
 
   -- common prompt terminators
-  if text:match("[%]%$#>~]$") then
+  if text:match('[%]%$#>~]$') then
     return true
   end
 
@@ -316,41 +315,50 @@ end
 action_clear_line = function(window, pane)
   -- cancel leader if active
   if window:leader_is_active() then
-    window:perform_action(act.SendKey{key="Escape"}, pane)
+    window:perform_action(act.SendKey{ key='Escape' }, pane)
     return
   end
 
   -- exit overlay if active
   ok, process_info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not process_info then
-    window:perform_action(act.SendKey{ key="Escape" }, pane)
+    window:perform_action(act.SendKey{ key='Escape' }, pane)
     return
   end
 
-  -- if some app running, but not shell, e.g. nvim
   shell = get_shell(pane)
+
+  -- if some app running, but not shell, e.g. nvim
   if shell == '' then
-    -- there were problems with sending both key "Escape" and string "0x1B" directly
+    -- there were problems with sending key "Escape" or string "0x1B" directly
     -- Ctrl+[ is old portable terminal trick for sending Esc char 0x1B
     -- apparently Ctrl shaves off high bit of [ char 0x5B leaving 0x1B
-    window:perform_action(act.SendKey{ key="[", mods="CTRL" }, pane)
+    window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
     return
   end
 
   -- send Esc if line is empty
   if line_is_empty(pane) then
-    window:perform_action(act.SendKey{ key="[", mods="CTRL" }, pane)
+    window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
     return
   end
 
   -- last option is to clear line
-  if wezterm.target_triple:match("windows") then
-    -- In Windows cmd.exe this is clear line code, maybe more portable
-    window:perform_action(act.SendString('\x15'), pane)
-  else
-   -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
-    window:perform_action(act.SendString('\x01\x0b'), pane)
+  if wezterm.target_triple:match('windows') then
+    if shell == 'cmd' then
+      -- In Windows cmd.exe this is clear line code, maybe more portable
+      window:perform_action( act.SendString( '\x15' ), pane)
+    elseif shell == 'pwsh' or shell == 'powershell' then
+      window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
+    elseif shell == 'zsh' then
+      window:perform_action(act.SendKey{ key='u', mods='CTRL' }, pane)
+    end
+    
+    return
   end
+
+  -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
+  window:perform_action(act.SendString('\x01\x0b'), pane)
 end
 
 -- Send selected text to pane running alt screen
@@ -390,15 +398,15 @@ end
 
 ----------------------------------------------------------------------------------
 config.keys = {
-    { key = 'Enter',      mods = 'LEADER', action = act.ShowLauncher },
-    { key = 'Backspace',  mods = 'LEADER', action = act.ShowDebugOverlay },
-    { key = 'Space',      mods = 'LEADER', action = act.ShowTabNavigator },
+    { key = 'F1', mods = 'NONE', action = act.ShowDebugOverlay },
+    { key = 'F2', mods = 'NONE', action = act.ShowLauncher },
+    { key = 'F3', mods = 'NONE', action = act.ShowTabNavigator },
     
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
     
     { key = 'Enter',      mods = 'CTRL|ALT', action = wezterm.action_callback( action_clear_screen ) },
-    { key = 'Escape',     mods = '',         action = wezterm.action_callback( action_clear_line ) },
+    { key = 'Escape',     mods = 'NONE',     action = wezterm.action_callback( action_clear_line ) },
     
     { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
     { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
@@ -540,8 +548,8 @@ if wezterm.target_triple:match('windows') then
   })
   
   table.insert(launch_menu, {
-    label = 'PowerShell',
-    args = { 'powershell.exe', '-NoLogo'},
+    label = 'PowerShell 7',
+    args = { 'pwsh.exe', '-NoLogo'},
   })
   
   table.insert(launch_menu, {
@@ -652,7 +660,8 @@ end)
 icons_names = {
   nvim       = { wezterm.nerdfonts.custom_neovim,    'Neovim' },
   bash       = { wezterm.nerdfonts.seti_git,         'bash' },
-  powershell = { wezterm.nerdfonts.seti_powershell,  'Powershell' },
+  powershell = { wezterm.nerdfonts.seti_powershell,  'PS5' },
+  pwsh       = { wezterm.nerdfonts.seti_powershell,  'PS7' },
   python     = { wezterm.nerdfonts.seti_python,      'Python' },
   python3    = { wezterm.nerdfonts.seti_python,      'Python' },
   cmd        = { wezterm.nerdfonts.cod_terminal,     'Cmd' },
