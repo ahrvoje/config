@@ -450,12 +450,7 @@ config.keys = {
     { key = 'DownArrow',  mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Down' } },
     { key = 'UpArrow',    mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Up' } },
     { key = 'RightArrow', mods = 'CTRL|ALT', action = act.SplitPane { direction = 'Right' } },
-    
-    { key = 'LeftArrow',  mods = 'SUPER', action = act.SendString "\x1bOH" },
-    { key = 'DownArrow',  mods = 'SUPER', action = act.ScrollByPage( 0.5 ) },
-    { key = 'UpArrow',    mods = 'SUPER', action = act.ScrollByPage( -0.5 ) },
-    { key = 'RightArrow', mods = 'SUPER', action = act.SendString "\x1bOF" },
-    
+        
     -- key mappings for KeyTable stack and actions
     { key = '0', mods = 'CTRL|ALT',
       action = act.Multiple {
@@ -515,8 +510,13 @@ if wezterm.target_triple:match('darwin') then
   for k = 1,9 do
     table.insert(config.keys, { key = tostring(k), mods = "CTRL", action = act.SendKey( { key = tostring(k), mods="CTRL" }) })
   end
-  -- make sure CMD+q is pass through as it is used as nvim leader
-    table.insert(config.keys, { key = 'q', mods = 'SUPER', action = act.SendKey( { key = 'q', mods='SUPER' }) })
+
+  -- cursor Home and End, half-page Up & Down
+  table.insert(config.keys, { key = 'LeftArrow',  mods = 'SUPER', action = act.SendString "\x1bOH" })
+  table.insert(config.keys, { key = 'DownArrow',  mods = 'SUPER', action = act.ScrollByPage( 0.5 ) })
+  table.insert(config.keys, { key = 'UpArrow',    mods = 'SUPER', action = act.ScrollByPage( -0.5 ) })
+  table.insert(config.keys, { key = 'RightArrow', mods = 'SUPER', action = act.SendString "\x1bOF" })
+
 end
 
 -- Local key macros loaded from local configuration
