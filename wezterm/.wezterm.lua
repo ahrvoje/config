@@ -693,6 +693,9 @@ local format_right_status = function(window, pane)
 end
 
 wezterm.on('update-status', function(window, pane)
+  -- fix for nudging the tab title redraw for wezterm overlays
+  window:set_right_status('')
+
   window:set_left_status(format_left_status(window, pane))
   window:set_right_status(format_right_status(window, pane))
 end)
@@ -712,21 +715,21 @@ icons_names = {
   zsh        = { wezterm.nerdfonts.md_percent,       'zsh' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
-  active_pane = tab.active_pane
+  pane = tab.active_pane
   
-  process_name, full_name, process_info = get_process_info(active_pane)
+  process_name, full_name, process_info = get_process_info(pane)
   if not process_name or process_name == 'wezterm' then
     -- leave formatting to wezterm
     return nil
   end
   
-  if active_pane.title:match('Copy mode:') then
+  if pane.title:match('Copy mode:') then
     title_prefix = 'Copy mode: '
   else
     title_prefix = ''
   end
   
-  name = get_shell(active_pane)
+  name = get_shell(pane)
   if not name or name == '' then
     name = process_name
   end
@@ -734,7 +737,7 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   icon_name = icons_names[name] or { '>', name }  
   
   return wezterm.format({
-    { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. active_pane.pane_id },
+    { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. pane.pane_id },
   })
 end)
 
