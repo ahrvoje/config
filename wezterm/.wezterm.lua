@@ -620,7 +620,7 @@ local format_right_status = function(window, pane)
   shell = get_shell(pane)  
   process_name, _, process_info = get_process_info(pane)
 
-  if not shell and process_name ~= 'wezterm' and not pane:is_alt_screen_active() then
+  if not shell and process_name and process_name ~= 'wezterm' and not pane:is_alt_screen_active() then
     running_color = 'rgb(255, 0, 0)'
   elseif shell == 'wezterm-gui' then
     running_color = 'rgb(0, 0, 0)'
@@ -659,7 +659,7 @@ local format_right_status = function(window, pane)
 
   -- Process start time  
   ---------------------
-  if process_name == 'wezterm' then
+  if not process_info or not process_info.start_time then
     -- if overlay like debug or launcher
     time_status = '-------------------'
   else
@@ -714,25 +714,25 @@ icons_names = {
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   active_pane = tab.active_pane
   
+  process_name, full_name, process_info = get_process_info(active_pane)
+  if not process_name or process_name == 'wezterm' then
+    -- leave formatting to wezterm
+    return nil
+  end
+  
   if active_pane.title:match('Copy mode:') then
     title_prefix = 'Copy mode: '
   else
     title_prefix = ''
   end
   
-  process_name, full_name, process_info = get_process_info(active_pane)
-  if process_name == 'wezterm' then
-    -- leave formatting to wezterm
-    return nil
-  end
-
   name = get_shell(active_pane)
   if not name or name == '' then
     name = process_name
   end
-
+  
   icon_name = icons_names[name] or { '>', name }  
-
+  
   return wezterm.format({
     { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. active_pane.pane_id },
   })
