@@ -152,10 +152,10 @@ RPROMPT='%*'
 # invoke config if exists
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
-fzf_root='/'
+fzf_root=/
 # special Windows-specific cases for msys64/usr/bin/zsh.exe
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || -n "$MSYSTEM" ]]; then
-  fzf_root='C:/ D:/'
+  fzf_root=(C:/ D:/)
 fi
 
 fzf_find_file_local() {
@@ -190,7 +190,7 @@ fzf_find_file_global() {
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
           --walker=file,hidden,follow \
-          --walker-root="${wr[@]}" </dev/tty \
+          --walker-root="${fzf_root[@]}" </dev/tty \
           --preview 'bat --style=numbers --color=always --line-range :200 {} || file -b {}' \
           --preview-window=right:50%
   )" || return
@@ -210,7 +210,7 @@ fzf_cd() {
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
         --walker=dir,hidden,follow \
-        --walker-root=/ \
+        --walker-root="${fzf_root[@]}" \
         --prompt='cd> ' \
         --preview 'ls -la {} 2>/dev/null || echo "{}"' \
         --preview-window=right:50%:wrap \
