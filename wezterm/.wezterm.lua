@@ -137,16 +137,17 @@ end
 ----------------------------------------------------------------------------------
 -- 'Ctrl-d' close shell, taking care of special cases like PowerShell, Python...
 action_exit_shell = function(window, pane)
-  if get_shell(pane) == 'python' then
+  shell = get_shell(pane) 
+  if shell == 'python' then
     window:perform_action(act.SendString 'exit()\r', pane)
 
-  elseif get_shell(pane) == 'ptpython' then
+  elseif shell == 'ptpython' then
     window:perform_action(act.SendString 'exit()\n', pane)
 
-  elseif get_shell(pane) == 'powershell' then
+  elseif shell == 'powershell' or shell == 'pwsh' then
     window:perform_action(act.SendString 'exit\r', pane)
 
-  elseif get_shell(pane) == 'cmd' then
+  elseif shell == 'cmd' then
     window:perform_action(act.SendString 'exit\r', pane)
 
   else
@@ -349,7 +350,14 @@ action_clear_line = function(window, pane)
       -- In Windows cmd.exe this is clear line code, maybe more portable
       window:perform_action( act.SendString( '\x15' ), pane)
     elseif shell == 'pwsh' or shell == 'powershell' then
-      window:perform_action(act.SendKey{ key='c', mods='CTRL' }, pane)
+      -- In PowerShell 7 go to end, select to beginning and delete entire line
+      -- works in all editing modes (Windows, Emacs, Vi) and without key binds
+      -- which is impoertant due to Constrained Language Mode (CLM)
+      window:perform_action(act.Multiple {
+        act.SendKey{ key='End', mods='' },
+        act.SendKey{ key='Home', mods='SHIFT' },
+        act.SendKey{ key='Delete', mods='' },
+      }, pane)
     elseif shell == 'zsh' then
       window:perform_action(act.SendKey{ key='u', mods='CTRL' }, pane)
     end
