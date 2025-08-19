@@ -68,22 +68,28 @@ local function get_basename(s)
 end
 
 -- https://stackoverflow.com/questions/2235173/what-is-the-naming-standard-for-path-components
-local function get_rootname(s)
+local get_rootname = function(s)
   return s:match("([^/\\]+)%.exe$") or s:match("([^/\\]+)$")
 end
 
-local get_process_name_fullname_pid_time_argv = function (pane)
+local get_mux_pane = function(pane)
+  if not pane or not pane.foreground_process_name then
+    -- if nil or already mux just return back
+    return pane
+  end
+
   -- if not mux pane, get it
-  if pane and pane.foreground_process_name then
-    pane = wezterm.mux.get_pane(pane.pane_id)
-  end
+  return wezterm.mux.get_pane(pane.pane_id)
+end
+
+local get_process_name_fullname_pid_time_argv = function (pane)
+  pane = get_mux_pane(pane)
+  if not pane then return end
   
-  if pane and pane.get_foreground_process_info then
-    local info = pane.get_foreground_process_info(pane)
-    if info then
-      return get_rootname(info.name:lower()), info.executable:lower(), info.pid, info.start_time, info.argv
-    end
-  end
+  local info = pane:get_foreground_process_info()
+  if not info then return end
+  
+  return get_rootname(info.name:lower()), info.executable:lower(), info.pid, info.start_time, info.argv
 end
 
 ----------------------------------------------------------------------------------
@@ -195,6 +201,8 @@ end
 local action_log_pane_info = function(window, pane)
   wezterm.log_info('Pane info: ')
   wezterm.log_info(paneinfo_for_pane(pane))
+
+  wezterm.log_info('alt screen pane: ' .. tostring(pane:is_alt_screen_active()))
 end
 
 local action_log_local_config = function(window, pane)
@@ -272,15 +280,14 @@ local action_clear_screen = function(window, pane)
   shell = get_shell(pane)
   
   if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' or shell == 'nu' then
+    -- activates and works for Nushell in Windows
     window:perform_action(act.SendString ( 'cls\r' ), pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
-    return
-  end
   
-  if shell == 'bash' or shell == 'gitbash' or shell == 'zsh' or shell == 'wslhost' then
+  elseif shell == 'bash' or shell == 'gitbash' or shell == 'zsh' or shell == 'wslhost' or shell == 'msys' then
+    -- covers and works for Nushell in WSL
     window:perform_action(act.SendString('clear \r'), pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
-    return
   end
 end
 
@@ -356,61 +363,58 @@ local line_is_empty = function (pane)
 end
 
 local action_Esc = function(window, pane)
-  -- cancel leader if active
-  if window:leader_is_active() then
-    window:perform_action(act.SendKey{ key='Escape' }, pane)
-    return
-  end
-
-  -- exit overlay if active
-  process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
-  if not process_name then
-    window:perform_action(act.SendKey{ key='Escape' }, pane)
-    return
-  end
-  
-  if process_name == 'wslhost' then
-    if not pane:is_alt_screen_active() and not line_is_empty(pane) then
-      -- if in WSL CLI with some chars present in prompt line
-      window:perform_action(act.SendString( '\x01\x0b' ), pane)
-      return
-    end
-    -- other cases, e.g. nvim...
-    window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
-    return
-  end
-
   shell = get_shell(pane)
+  process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
 
+  if window:leader_is_active() then
+    -- cancel leader if active
+    window:perform_action(act.SendKey{ key='Escape' }, pane)
+
+  elseif not process_name then
+    -- exit overlay if active
+    window:perform_action(act.SendKey{ key='Escape' }, pane)
+  
+  elseif process_name == 'wslhost' or shell == 'msys' then
+    if not pane:is_alt_screen_active() and not line_is_empty(pane) then
+      -- if in CLI with some chars present in prompt line
+      window:perform_action(act.SendString( '\x01\x0b' ), pane)
+    else
+      -- alt screen app is running, e.g. nvim...
+      window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
+    end
+
+  elseif not shell then
   -- if some app running, but not shell, e.g. nvim
-  if not shell then
     -- there were problems with sending key "Escape" or string "0x1B" directly
     -- Ctrl+[ is old portable terminal trick for sending Esc char 0x1B
     -- apparently Ctrl shaves off high bit of [ char 0x5B leaving 0x1B
     window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
-    return
-  end
 
-  -- send Esc if line is empty
-  if line_is_empty(pane) then
+  elseif line_is_empty(pane) then
+    -- send Esc if line is empty
     window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
-    return
-  end
 
-  -- last option is to clear line
+  -- last option is to clear the line
+  elseif shell == 'cmd' then
+    window:perform_action(act.Multiple{
+      act.SendKey{ key='End',  mods='NONE' },
+      act.SendKey{ key='Home', mods='SHIFT' },
+      act.SendKey{ key='Delete', mods='NONE' },
+    }, pane)
 
-  if wezterm.target_triple:match('windows') and (shell == 'pwsh' or shell == 'powershell') then
+  elseif shell == 'pwsh' or shell == 'powershell' then
     -- PowerShell 5 & 7, works w/o PS key bind, w & w/o Constrained Language Mode (CLM)
     -- Ctrl+Home & Ctrl+End delete from cursor to home & end
     window:perform_action(act.Multiple{
       act.SendKey{ key='Home', mods='CTRL' },
       act.SendKey{ key='End',  mods='CTRL' },
     }, pane)
-    return
-  end
 
-  -- In win-cmd, Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line, seems rather portable
-  window:perform_action(act.SendString( '\x01\x0b' ), pane)
+  -- all left cases will get the last available option
+  else
+    -- Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
+    window:perform_action(act.SendString( '\x01\x0b' ), pane)
+  end
 end
 
 -- Send selected text to pane running alt screen
