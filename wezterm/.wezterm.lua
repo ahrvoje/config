@@ -81,7 +81,7 @@ local get_process_name_fullname_pid_time_argv = function (pane)
   if pane and pane.get_foreground_process_info then
     local info = pane.get_foreground_process_info(pane)
     if info then
-      return get_rootname((info.name):lower()), (info.executable):lower(), info.pid, info.start_time, info.argv
+      return get_rootname(info.name:lower()), info.executable:lower(), info.pid, info.start_time, info.argv
     end
   end
 end
@@ -287,33 +287,31 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + k' - Kill Process action
 local action_kill_process = function(window, pane)
-  process_name, _, pid, _, _ = get_process_name_fullname_pid_time_argv(pane)
+  process_name, _, pid, _, _ = get_process_name_fullname_pid_time_argv( pane )
   if process_name == 'wezterm' then
     return
   end
 
   if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
-    os.execute(('taskkill /PID %d /T'):format(pid))  -- no /F first
+    os.execute(('taskkill /PID %d /T'):format( pid ))  -- no /F first
     wezterm.sleep_ms(500)
-    os.execute(('taskkill /PID %d /T /F'):format(pid))
+    os.execute(('taskkill /PID %d /T /F'):format( pid ))
   else
-    os.execute(('kill %d'):format(pid))
+    os.execute(('kill %d'):format( pid ))
     wezterm.sleep_ms(500)
-    os.execute(('kill -9 %d'):format(pid))
+    os.execute(('kill -9 %d'):format( pid ))
   end
 end
 
 ----------------------------------------------------------------------------------
 -- 'LEADER + x' - Kill active pane
 local action_kill_pane = function(window, pane)
-  local id = pane:pane_id()
-
   -- Try nicely (without confirm)
   window:perform_action(wezterm.action.CloseCurrentPane { confirm = false }, pane)
 
   -- After 200ms delay try a hard kill
   wezterm.time.call_after(0.2, function()
-    wezterm.run_child_process({ 'wezterm', 'cli', 'kill-pane', '--pane-id', tostring(id) })
+    wezterm.run_child_process({ 'wezterm', 'cli', 'kill-pane', '--pane-id', tostring( pane:pane_id() ) })
   end)
 end
 
