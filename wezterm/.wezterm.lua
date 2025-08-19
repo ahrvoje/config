@@ -337,7 +337,7 @@ local line_is_empty = function (pane)
   return false
 end
 
-local action_clear_line = function(window, pane)
+local action_Esc = function(window, pane)
   -- cancel leader if active
   if window:leader_is_active() then
     window:perform_action(act.SendKey{ key='Escape' }, pane)
@@ -348,6 +348,17 @@ local action_clear_line = function(window, pane)
   process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
   if not process_name then
     window:perform_action(act.SendKey{ key='Escape' }, pane)
+    return
+  end
+  
+  if process_name == 'wslhost' then
+    if not pane:is_alt_screen_active() and not line_is_empty(pane) then
+      -- if in WSL CLI with some chars present in prompt line
+      window:perform_action(act.SendString( '\x01\x0b' ), pane)
+      return
+    end
+    -- other cases, e.g. nvim...
+    window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
     return
   end
 
@@ -430,6 +441,20 @@ config.keys = {
     { key = 'F7', mods = 'NONE', action = act.CharSelect{ group = 'Symbols' } },
     { key = 'F8', mods = 'NONE', action = act.CharSelect{ group = 'UnicodeNames' } },
 
+    -- send clean F keys to shell, e.g. for Midnight Commander
+    { key = 'F1',  mods = 'CTRL|ALT', action = act.SendKey{ key='F1',  mods='NONE' } },
+    { key = 'F2',  mods = 'CTRL|ALT', action = act.SendKey{ key='F2',  mods='NONE' } },
+    { key = 'F3',  mods = 'CTRL|ALT', action = act.SendKey{ key='F3',  mods='NONE' } },
+    { key = 'F4',  mods = 'CTRL|ALT', action = act.SendKey{ key='F4',  mods='NONE' } },
+    { key = 'F5',  mods = 'CTRL|ALT', action = act.SendKey{ key='F5',  mods='NONE' } },
+    { key = 'F6',  mods = 'CTRL|ALT', action = act.SendKey{ key='F6',  mods='NONE' } },
+    { key = 'F7',  mods = 'CTRL|ALT', action = act.SendKey{ key='F7',  mods='NONE' } },
+    { key = 'F8',  mods = 'CTRL|ALT', action = act.SendKey{ key='F8',  mods='NONE' } },
+    { key = 'F9',  mods = 'CTRL|ALT', action = act.SendKey{ key='F9',  mods='NONE' } },
+    { key = 'F10', mods = 'CTRL|ALT', action = act.SendKey{ key='F10', mods='NONE' } },
+    { key = 'F11', mods = 'CTRL|ALT', action = act.SendKey{ key='F11', mods='NONE' } },
+    { key = 'F12', mods = 'CTRL|ALT', action = act.SendKey{ key='F12', mods='NONE' } },
+
     { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
     { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
     { key = 'x',          mods = 'LEADER', action = wezterm.action_callback( action_kill_pane ) },
@@ -439,8 +464,8 @@ config.keys = {
       wezterm.action_callback( action_log_local_config ),
     }},
 
+    { key = 'Escape',     mods = 'NONE',     action = wezterm.action_callback( action_Esc ) },
     { key = 'Enter',      mods = 'CTRL|ALT', action = wezterm.action_callback( action_clear_screen ) },
-    { key = 'Escape',     mods = 'NONE',     action = wezterm.action_callback( action_clear_line ) },
     
     { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
     { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },

@@ -121,6 +121,13 @@ return {
           opts = { skip = true },
         },
         {
+          filter = {
+            any = { { event = "msg_show" }, { event = "notify" } },
+            find = "vim%.tbl_islist.*deprecated",
+          },
+          opts = { skip = true },
+        },
+        {
           -- inhibit EPERM error during Oil preview
           filter = {
             any = { { event = "msg_show" }, { event = "notify" } },
