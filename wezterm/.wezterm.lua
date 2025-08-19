@@ -73,19 +73,17 @@ local function get_rootname(s)
 end
 
 local get_process_name_fullname_pid_time_argv = function (pane)
-  if pane.foreground_process_name then
-    full_name = pane.foreground_process_name
-    if full_name then
-      return get_rootname(full_name), full_name, nil, nil, nil
-    end
-  else
-    ok, info = pcall(pane.get_foreground_process_info, pane)
-    if ok and info then
-      return get_rootname(info.name), info.executable, info.pid, info.start_time, info.argv
+  -- if not mux pane, get it
+  if pane and pane.foreground_process_name then
+    pane = wezterm.mux.get_pane(pane.pane_id)
+  end
+  
+  if pane and pane.get_foreground_process_info then
+    local info = pane.get_foreground_process_info(pane)
+    if info then
+      return get_rootname((info.name):lower()), (info.executable):lower(), info.pid, info.start_time, info.argv
     end
   end
-
-  return nil, nil, nil, nil, nil
 end
 
 ----------------------------------------------------------------------------------
@@ -102,8 +100,12 @@ local get_shell = function(pane)
   }
 
   process_name, full_name, _, _, argv = get_process_name_fullname_pid_time_argv(pane)
-  if not process_name then
+  if not process_name or not full_name then
     return nil
+  end
+  
+  if process_name == 'bash' and full_name:match('git') then
+    return 'gitbash'
   end
   
   if shells[process_name] then
@@ -501,7 +503,8 @@ config.keys = {
   { key = 'Escape',     mods = 'NONE',       action = wezterm.action_callback( action_Esc ) },
   { key = 'Enter',      mods = 'CTRL|ALT',   action = wezterm.action_callback( action_clear_screen ) },
   
-  { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
+  { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'DefaultDomain' },
+  { key = 'y',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
   { key = 'Tab',        mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
   { key = 'Tab',        mods = 'CTRL',       action = act.ActivateTabRelative(1) },
   
@@ -661,7 +664,7 @@ config.launch_menu = launch_menu
 local format_left_status = function(window, pane)
   return wezterm.format({
     { Foreground = { Color = '#66AAAA' } },
-    { Text = window:active_workspace() },
+    { Text = window:active_workspace() .. ' : ' .. pane:get_domain_name() },
   })
 end
 
@@ -757,11 +760,13 @@ end)
 -- Format tab title
 icons_names = {
   nvim       = { wezterm.nerdfonts.custom_neovim,    'Neovim' },
-  bash       = { wezterm.nerdfonts.seti_git,         'bash' },
+  bash       = { wezterm.nerdfonts.md_bash,          'bash' },
+  gitbash    = { wezterm.nerdfonts.dev_git,          'git bash' },
   powershell = { wezterm.nerdfonts.seti_powershell,  'PS5' },
   pwsh       = { wezterm.nerdfonts.seti_powershell,  'PS7' },
   python     = { wezterm.nerdfonts.seti_python,      'Python' },
   python3    = { wezterm.nerdfonts.seti_python,      'Python' },
+  ptpython   = { wezterm.nerdfonts.seti_python,      'PtPy' },
   cmd        = { wezterm.nerdfonts.cod_terminal,     'Cmd' },
   julia      = { wezterm.nerdfonts.seti_julia,       'Julia' },
   wslhost    = { wezterm.nerdfonts.linux_tux,        'WSL' },
