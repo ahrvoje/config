@@ -276,15 +276,8 @@ local action_clear_screen = function(window, pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
     return
   end
-  
---  if shell == 'bash' then
---    -- In Bash/Zsh/etc., send terminal reset aka RIS
---    window:perform_action(act.SendString('\x1bc'), pane)
---    window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
---    return
---  end
-  
-  if shell == 'bash' or shell == 'zsh' or shell == 'wslhost' then
+    
+  if shell == 'bash' or shell == 'gitbash' or shell == 'zsh' or shell == 'wslhost' then
     window:perform_action(act.SendString('clear \r'), pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
     return
