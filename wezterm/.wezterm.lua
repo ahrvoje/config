@@ -72,23 +72,20 @@ local function get_rootname(s)
   return s:match("([^/\\]+)%.exe$") or s:match("([^/\\]+)$")
 end
 
-local get_process_info = function (pane)
+local get_process_name_fullname_pid_time_argv = function (pane)
   if pane.foreground_process_name then
-    ok = true
     full_name = pane.foreground_process_name
-    info = nil
+    if full_name then
+      return get_rootname(full_name), full_name, nil, nil, nil
+    end
   else
-    ok_n, full_name = pcall(pane.get_foreground_process_name, pane)
-    ok_i, info = pcall(pane.get_foreground_process_info, pane)
+    ok, info = pcall(pane.get_foreground_process_info, pane)
+    if ok and info then
+      return get_rootname(info.name), info.executable, info.pid, info.start_time, info.argv
+    end
   end
 
-  -- this case covers lua debug overlay, Launcher, TabNavigator
-  if not ok_n or not ok_i or not full_name or full_name == '' then
-    return 'wezterm', 'wezterm', 'wezterm'
-  end
-  
-  full_name = full_name:lower()
-  return get_rootname(full_name), full_name, info
+  return nil, nil, nil, nil, nil
 end
 
 ----------------------------------------------------------------------------------
@@ -104,31 +101,33 @@ local get_shell = function(pane)
     wslhost = 7, nu = 8, fish = 9, sh = 10, ksh = 11, dash = 12,
   }
 
-  process_name, full_name, process_info = get_process_info(pane)
-  if process_info then
-    argv = process_info.argv
+  process_name, full_name, _, _, argv = get_process_name_fullname_pid_time_argv(pane)
+  if not process_name then
+    return nil
   end
   
   if shells[process_name] then
     return process_name
   end
-  
-  if argv then
-    if ((process_name == 'python') or (process_name == 'python3')) and (#argv == 1) then
-      return 'python'
-    end
-
-    if ((process_name == 'python') or (process_name == 'python3')) and (#argv == 2) and (argv[2]:match('ptpython')) then
-      return 'ptpython'
-    end
-    
-    if (process_name == 'julia') and (#argv == 1) then
-      return 'julia'
-    end
-  end
 
   if full_name:match('msys') and process_name:match('env') then
     return 'msys'
+  end
+
+  if not argv then
+    return nil
+  end
+
+  if ((process_name == 'python') or (process_name == 'python3')) and (#argv == 1) then
+    return 'python'
+  end
+
+  if ((process_name == 'python') or (process_name == 'python3')) and (#argv == 2) and (argv[2]:match('ptpython')) then
+    return 'ptpython'
+  end
+  
+  if (process_name == 'julia') and (#argv == 1) then
+    return 'julia'
   end
   
   return nil
@@ -171,7 +170,11 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + l' log current process, pane, and local conf info into debug overlay
 local action_log_process = function(window, pane)
-  process_name, _, process_info = get_process_info(pane)
+  ok, process_info = pcall(pane.get_foreground_process_info, pane)
+  if not ok or not process_info then
+    return
+  end
+
   if process_name == 'wezterm' then
     wezterm.log_info('wezterm overlay')
   else
@@ -258,13 +261,11 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + k' - Kill Process action
 local action_kill_process = function(window, pane)
-  process_name, _, process_info = get_process_info(pane)
+  process_name, _, pid, _, _ = get_process_name_fullname_pid_time_argv(pane)
   if process_name == 'wezterm' then
     return
   end
 
-  pid = process_info.pid
-  
   if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
     os.execute(('taskkill /PID %d /T'):format(pid))  -- no /F first
     wezterm.sleep_ms(500)
@@ -344,8 +345,8 @@ local action_clear_line = function(window, pane)
   end
 
   -- exit overlay if active
-  process_name, _, _ = get_process_info(pane)
-  if process_name == 'wezterm' then
+  process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
+  if not process_name then
     window:perform_action(act.SendKey{ key='Escape' }, pane)
     return
   end
@@ -368,25 +369,18 @@ local action_clear_line = function(window, pane)
   end
 
   -- last option is to clear line
-  if wezterm.target_triple:match('windows') then
-    if shell == 'cmd' then
-      -- In Windows cmd.exe this is clear line code, maybe more portable
-      window:perform_action( act.SendString( '\x15' ), pane)
-    elseif shell == 'pwsh' or shell == 'powershell' then
-      -- PowerShell 5 & 7, works without PS key bind, w/wo Constrained Language Mode (CLM)
-      -- Ctrl+Home & Ctrl+End delete from cursor to home & end
-      window:perform_action(act.Multiple{
-        act.SendKey{ key='Home', mods='CTRL' },
-        act.SendKey{ key='End',  mods='CTRL' },
-      }, pane)
-    elseif shell == 'zsh' or shell == 'wslhost' then
-      window:perform_action(act.SendKey{ key='u', mods='CTRL' }, pane)
-    end
-    
+
+  if wezterm.target_triple:match('windows') and (shell == 'pwsh' or shell == 'powershell') then
+    -- PowerShell 5 & 7, works w/o PS key bind, w & w/o Constrained Language Mode (CLM)
+    -- Ctrl+Home & Ctrl+End delete from cursor to home & end
+    window:perform_action(act.Multiple{
+      act.SendKey{ key='Home', mods='CTRL' },
+      act.SendKey{ key='End',  mods='CTRL' },
+    }, pane)
     return
   end
 
-  -- In Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
+  -- In win-cmd, Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line, seems rather portable
   window:perform_action(act.SendString( '\x01\x0b' ), pane)
 end
 
@@ -622,14 +616,9 @@ local format_right_status = function(window, pane)
     key_tables_text = ''
   end
 
-  process_name, _, process_info = get_process_info(pane)
-  if process_info then
-    -- process time has to be handled, extracted and cached here
-    -- otherwuse it does not work later for unknown reason
-    process_time = process_info.start_time
-  end
-
   shell = get_shell(pane)
+  process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
+
   if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
     running_color = '#000000'
   else
@@ -726,7 +715,7 @@ icons_names = {
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   pane = tab.active_pane
   
-  process_name, full_name, process_info = get_process_info(pane)
+  process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
   if not process_name or process_name == 'wezterm' then
     -- leave formatting to wezterm
     return nil
