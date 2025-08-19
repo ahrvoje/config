@@ -443,22 +443,21 @@ end
 
 ----------------------------------------------------------------------------------
 -- key tables stack icons - clear, add, pop
-local key_icons = ''
+local key_icons = {}
 local clear_key_icons_stack = function(window, pane)
-  key_icons = ''
+  key_icons = {}
 end
 
 local pop_key_icons_stack = function(window, pane)
-  -- unicode icon char size is 3, with one space char (see below), so start from char 5 = 3 + 1 + 1
-  key_icons = key_icons:sub(3 + 1 + 1, #key_icons)
+  table.remove(key_icons)
 end
 
 local add_term_key_icon = function(window, pane)
-  key_icons = wezterm.nerdfonts.cod_terminal .. ' ' .. key_icons
+  table.insert(key_icons, wezterm.nerdfonts.cod_terminal)
 end
 
 local add_nvim_key_icon = function(window, pane)
-  key_icons = wezterm.nerdfonts.custom_neovim .. ' ' .. key_icons
+  table.insert(key_icons, wezterm.nerdfonts.custom_neovim)
 end
 
 ----------------------------------------------------------------------------------
@@ -668,7 +667,7 @@ end
 
 local format_right_status = function(window, pane)
   if #key_icons > 0 then
-    key_tables_text = 'key tables: '
+    key_tables_text = ' < Keys stack'
   else
     key_tables_text = ''
   end
@@ -732,10 +731,10 @@ local format_right_status = function(window, pane)
   -- Format top status
   --------------------
   return wezterm.format({
-    { Foreground = { Color = 'Gray' } },
-    { Text = key_tables_text },
     { Foreground = { Color = 'Yellow' } },
-    { Text = key_icons .. '        ' },
+    { Text = table.concat(key_icons, ' ') },
+    { Foreground = { Color = 'Gray' } },
+    { Text = key_tables_text .. '        ' },
     { Foreground = { Color = running_color } },
     { Text = wezterm.nerdfonts.md_fire },
     { Foreground = { Color = leader_color } },
