@@ -276,7 +276,7 @@ local action_clear_screen = function(window, pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
     return
   end
-    
+  
   if shell == 'bash' or shell == 'gitbash' or shell == 'zsh' or shell == 'wslhost' then
     window:perform_action(act.SendString('clear \r'), pane)
     window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
@@ -321,18 +321,12 @@ end
 -- 'Ctrl + Alt + ;' - Toggle zoom state of pane running alt screen
 local action_alt_pane_toggle_zoom = function(window, pane)
   tab = window:active_tab()
-  
-  for _, pane_info in ipairs(tab:panes_with_info()) do
-    p = pane_info['pane']
-    if p:is_alt_screen_active() then
-      p:activate()
-    end
-  end
 
   for _, pane_info in ipairs(tab:panes_with_info()) do
-    p = pane_info['pane']
-    if pane_info['is_active'] then
-      if pane_info['is_zoomed'] then
+    mux_pane = pane_info.pane
+    if mux_pane:is_alt_screen_active() then
+      mux_pane:activate()
+      if pane_info.is_zoomed then
         tab:set_zoomed(false)
       else
         tab:set_zoomed(true)
