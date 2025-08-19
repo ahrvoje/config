@@ -3,7 +3,7 @@
 [ -f $HOME/.zshlocal ] && source $HOME/.zshlocal
 
 # special Windows-specific cases for msys64/usr/bin/zsh.exe
-if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || -n "$MSYSTEM" ]]; then
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$MSYSTEM" != "" || "$WSL_DISTRO_NAME" != "" ]]; then
   for map in emacs viins; do
     # Home key
     bindkey -M $map '^[[H'  beginning-of-line     # ESC [ H
