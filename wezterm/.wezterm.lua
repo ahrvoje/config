@@ -3,6 +3,13 @@ local act = wezterm.action
 
 local config = wezterm.config_builder()
 
+--------------DEFAULT CONFIGURATION--------------
+local default_config = {
+  -- initial windows position
+  window_pos = { x = 200, y = 32 },
+}
+-------------------------------------------------
+
 ---------------LOCAL CONFIGURATION---------------
 local function prequire(m) 
   local ok, response = pcall(require, m) 
@@ -12,11 +19,12 @@ end
 local local_config = prequire 'wezterm_local'
 
 config.leader       = local_config.leader
-config.default_prog = local_config.default_prog
 config.font         = local_config.font
 config.font_size    = local_config.font_size
-config.launch_menu  = local_config.launch_menu
 config.window_frame = local_config.window_frame
+config.launch_menu  = local_config.launch_menu
+config.default_prog = local_config.default_prog
+-- local_config.keys applied after config.keys
 -------------------------------------------------
 
 config.adjust_window_size_when_changing_font_size = false
@@ -35,7 +43,6 @@ config.status_update_interval = 300
 config.window_decorations = 'RESIZE'
 
 -- Selection of dark themes with acceptable contrast
---
 config.color_scheme = 'Bright (base16)'
 -- config.color_scheme = 'Brogrammer'
 -- config.color_scheme = 'Brogrammer (Gogh)'
@@ -54,15 +61,15 @@ config.color_scheme = 'Bright (base16)'
 
 
 -- Equivalent to POSIX basename(3)
--- Given "/foo/bar" returns "bar"
--- Given "c:\\foo\\bar" returns "bar"
+-- Given '/foo/bar' returns 'bar'
+-- Given 'c:\\foo\\bar' returns 'bar'
 local function get_basename(s)
   return string.gsub(s, '(.*[/\\])(.*)', '%2')
 end
 
 -- https://stackoverflow.com/questions/2235173/what-is-the-naming-standard-for-path-components
 local function get_rootname(s)
-  return s:match("([^/\\]+)%.exe$") or s:match("([^/\\]+)$")
+  return s:match('([^/\\]+)%.exe$') or s:match('([^/\\]+)$')
 end
 
 local function get_mux_pane(pane)
@@ -76,8 +83,8 @@ local function get_mux_pane(pane)
 end
 
 local function get_process_name_fullname_pid_time_argv(pane)
-  pane = get_mux_pane(pane)
-  info = pane and pane:get_foreground_process_info()
+  local pane = get_mux_pane(pane)
+  local info = pane and pane:get_foreground_process_info()
   if not info then return end
   
   return get_rootname(info.name:lower()), info.executable:lower(), info.pid, info.start_time, info.argv
@@ -96,7 +103,7 @@ local function get_shell(pane)
     wslhost = 7, nu = 8, fish = 9, sh = 10, ksh = 11, dash = 12,
   }
 
-  process_name, full_name, _, _, argv = get_process_name_fullname_pid_time_argv(pane)
+  local process_name, full_name, _, _, argv = get_process_name_fullname_pid_time_argv(pane)
   if not process_name or not full_name then
     return
   end
@@ -146,7 +153,7 @@ end
 ----------------------------------------------------------------------------------
 -- 'Ctrl-d' close shell, taking care of special cases like PowerShell, Python...
 local action_exit_shell = function(window, pane)
-  shell = get_shell(pane) 
+  local shell = get_shell(pane)
   if shell == 'python' then
     window:perform_action(act.SendString 'exit()\r', pane)
 
@@ -167,7 +174,7 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + l' log current process, pane, and local conf info into debug overlay
 local function get_process_info(window, pane)
-  ok, process_info = pcall(pane.get_foreground_process_info, pane)
+  local ok, process_info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not process_info then
     return
   end
@@ -177,7 +184,7 @@ local function get_process_info(window, pane)
   end
   
   return {
-    context = "Process info",
+    context = 'Process info',
     data = process_info,
   }
 end
@@ -253,7 +260,7 @@ end
 --   Default line-start/history-up/history-down if shell is active
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
 local action_home = function(window, pane)
-  shell = get_shell(pane)
+  local shell = get_shell(pane)
   if not shell or shell ~= '' then
     -- wezterm overlay or actual shell (e.g. zsh)
     window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
@@ -263,7 +270,7 @@ local action_home = function(window, pane)
 end
 
 local action_up = function(window, pane)
-  shell = get_shell(pane)
+  local shell = get_shell(pane)
   if not shell or shell ~= '' then
     window:perform_action(act.SendKey{ key='UpArrow', mods='NONE' }, pane)
   else
@@ -272,7 +279,7 @@ local action_up = function(window, pane)
 end
 
 local action_down = function(window, pane)
-  shell = get_shell(pane)
+  local shell = get_shell(pane)
   if not shell or shell ~= '' then
     window:perform_action(act.SendKey{ key='DownArrow', mods='NONE' }, pane)
   else
@@ -283,7 +290,7 @@ end
 ----------------------------------------------------------------------------------
 -- Clear screen action
 local action_clear_screen = function(window, pane)
-  shell = get_shell(pane)
+  local shell = get_shell(pane)
   
   if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' or shell == 'nu' then
     -- activates and works for Nushell in Windows
@@ -300,7 +307,7 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + k' - Kill Process action
 local action_kill_process = function(window, pane)
-  process_name, _, pid, _, _ = get_process_name_fullname_pid_time_argv( pane )
+  local process_name, _, pid, _, _ = get_process_name_fullname_pid_time_argv( pane )
   if process_name == 'wezterm' then
     return
   end
@@ -331,10 +338,10 @@ end
 ----------------------------------------------------------------------------------
 -- 'Ctrl + Alt + ;' - Toggle zoom state of pane running alt screen
 local action_alt_pane_toggle_zoom = function(window, pane)
-  tab = window:active_tab()
+  local tab = window:active_tab()
 
   for _, pane_info in ipairs(tab:panes_with_info()) do
-    mux_pane = pane_info.pane
+    local mux_pane = pane_info.pane
     if mux_pane:is_alt_screen_active() then
       mux_pane:activate()
       if pane_info.is_zoomed then
@@ -369,8 +376,8 @@ local line_is_empty = function (pane)
 end
 
 local action_Esc = function(window, pane)
-  shell = get_shell(pane)
-  process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
+  local shell = get_shell(pane)
+  local process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
   
   if window:leader_is_active() then
     -- cancel leader if active
@@ -391,7 +398,7 @@ local action_Esc = function(window, pane)
   
   elseif not shell then
   -- if some app running, but not shell, e.g. nvim
-    -- there were problems with sending key "Escape" or string "0x1B" directly
+    -- there were problems with sending key 'Escape' or string '0x1B' directly
     -- Ctrl+[ is old portable terminal trick for sending Esc char 0x1B
     -- apparently Ctrl shaves off high bit of [ char 0x5B leaving 0x1B
     window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
@@ -425,11 +432,10 @@ end
 
 -- Send selected text to pane running alt screen
 local action_send_to_alt_pane = function(window, pane)
-  text = window:get_selection_text_for_pane(pane)
+  local text = window:get_selection_text_for_pane(pane)
 
-  tab = window:active_tab()
-  for _, pane_info in ipairs(tab:panes_with_info()) do
-    p = pane_info['pane']
+  for _, pane_info in ipairs(window:active_tab():panes_with_info()) do
+    local p = pane_info.pane
     if p:is_alt_screen_active() then
       wezterm.log_info(text)
       window:perform_action(act.SendString(text), p)
@@ -532,13 +538,13 @@ config.keys = {
   },
   { key = '9', mods = 'CTRL|ALT',
     action = act.Multiple { 
-      act.ActivateKeyTable({ name = "term", one_shot = false }),
+      act.ActivateKeyTable({ name = 'term', one_shot = false }),
       wezterm.action_callback( add_term_key_icon )
     }
   },
   { key = '8', mods = 'CTRL|ALT',
     action = act.Multiple { 
-      act.ActivateKeyTable({ name = "nvim", one_shot = false }),
+      act.ActivateKeyTable({ name = 'nvim', one_shot = false }),
       wezterm.action_callback( add_nvim_key_icon )
     }
   },
@@ -568,19 +574,19 @@ config.key_tables = {
 if wezterm.target_triple:match('darwin') then
   -- Mac, make sure CTRL+1..9 pass through to shell as they are character keys
   for k = 1,9 do
-    table.insert(config.keys, { key = tostring(k), mods = "CTRL", action = act.SendKey( { key = tostring(k), mods="CTRL" }) })
+    table.insert(config.keys, { key = tostring(k), mods = 'CTRL', action = act.SendKey( { key = tostring(k), mods='CTRL' }) })
   end
 
   -- cursor Home and End, half-page Up & Down
-  table.insert(config.keys, { key = 'LeftArrow',  mods = 'SUPER', action = act.SendString "\x1bOH" })
+  table.insert(config.keys, { key = 'LeftArrow',  mods = 'SUPER', action = act.SendString '\x1bOH' })
   table.insert(config.keys, { key = 'DownArrow',  mods = 'SUPER', action = act.ScrollByPage( 0.5 ) })
   table.insert(config.keys, { key = 'UpArrow',    mods = 'SUPER', action = act.ScrollByPage( -0.5 ) })
-  table.insert(config.keys, { key = 'RightArrow', mods = 'SUPER', action = act.SendString "\x1bOF" })
+  table.insert(config.keys, { key = 'RightArrow', mods = 'SUPER', action = act.SendString '\x1bOF' })
 
 end
 
--- Local key binds loaded from local configuration
-if local_config and local_config['keys'] then
+-- apply local key binds
+if local_config.keys then
   for _, v in ipairs(local_config.keys) do
     table.insert(config.keys, v)
   end
@@ -588,7 +594,7 @@ end
 
 -- send selected text to alt-screen pane, e.g. send terminal selection to nvim
 if wezterm.gui then
-  copy_mode = wezterm.gui.default_key_tables().copy_mode
+  local copy_mode = wezterm.gui.default_key_tables().copy_mode
   table.insert(
     copy_mode,
     { key = 'Enter', mods = 'CTRL', action = wezterm.action_callback( action_send_to_alt_pane ) }
@@ -618,8 +624,8 @@ local format_left_status = function(window, pane)
 end
 
 local function get_battery_status()
-  battery_info = wezterm:battery_info()
-  if #battery_info == 0 then
+  local info = wezterm:battery_info()
+  if #info == 0 then
     return {
       color = '',
       icon = '',
@@ -627,28 +633,32 @@ local function get_battery_status()
     }
   end
 
-  battery_charge = battery_info[1]['state_of_charge']
-  battery_text = math.ceil(100 * battery_charge) .. '%  '
-
-  if battery_charge < 0.25 then
-    battery_color = 'Red'
-    battery_icon = wezterm.nerdfonts.md_battery_20
-  elseif battery_charge < 0.5 then
-    battery_color = 'Yellow'
-    battery_icon = wezterm.nerdfonts.md_battery_50
+  local charge = info[1]['state_of_charge']
+  local color, icon, text
+  
+  if charge < 0.25 then
+    color = 'Red'
+    icon = wezterm.nerdfonts.md_battery_20
+  elseif charge < 0.5 then
+    color = 'Yellow'
+    icon = wezterm.nerdfonts.md_battery_50
   else
-    battery_color = 'Green'
-    battery_icon = wezterm.nerdfonts.md_battery
+    color = 'Green'
+    icon = wezterm.nerdfonts.md_battery
   end
 
+  text = math.ceil(100 * charge) .. '%  '
+
   return {
-    color = battery_color,
-    icon  = batter_icon,
-    text  = battery_text,
+    color = color,
+    icon  = icon,
+    text  = text,
   }
 end
 
 local function get_pane_start_time(process_time)
+  local unix_time
+
   if not process_time then
     -- if wezterm overlay like debug or launcher
     return '------------------------------'
@@ -666,9 +676,10 @@ local function get_pane_start_time(process_time)
 end
 
 local format_right_status = function(window, pane)
-  shell = get_shell(pane)
-  process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
+  local shell = get_shell(pane)
+  local process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
 
+  local running_color
   if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
     -- show idle status for idle shell, wezterm overlay, alt screen app
     running_color = '#000000'
@@ -677,7 +688,7 @@ local format_right_status = function(window, pane)
     running_color = '#FF0000'
   end
   
-  battery_status = get_battery_status()
+  local battery_status = get_battery_status()
 
   -- Format top status
   --------------------
@@ -722,26 +733,27 @@ icons_names = {
   zsh        = { wezterm.nerdfonts.md_percent,       'zsh' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
-  pane = tab.active_pane
+  local pane = tab.active_pane
   
-  process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
+  local process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
   if not process_name or process_name == 'wezterm' then
     -- leave formatting to wezterm
     return nil
   end
   
+  local title_prefix
   if pane.title:match('Copy mode:') then
     title_prefix = 'Copy mode: '
   else
     title_prefix = ''
   end
   
-  name = get_shell(pane)
+  local name = get_shell(pane)
   if not name or name == '' then
     name = process_name
   end
   
-  icon_name = icons_names[name] or { '>', name }  
+  local icon_name = icons_names[name] or { '>', name }  
   
   return wezterm.format({
     { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. pane.pane_id },
@@ -750,10 +762,10 @@ end)
 
 -- Startup window position is loaded from local configuration
 wezterm.on('gui-startup', function(cmd)
-  x = local_config.window_pos and local_config.window_pos.x or 200
-  y = local_config.window_pos and local_config.window_pos.y or 32
-  
-  wezterm.mux.spawn_window(cmd or { position = { x = x , y = y } })
+  wezterm.mux.spawn_window(cmd or { position = {
+    x = local_config.window_pos and local_config.window_pos.x or default_config.window_pos.x,
+    y = local_config.window_pos and local_config.window_pos.y or default_config.window_pos.y,
+  }})
 end)
 
 return config

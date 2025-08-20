@@ -6,7 +6,7 @@ return {
   font = wezterm.font 'Consolas',
   font_size = 12,
   window_frame = { font_size = 12 },
-  
+
   keys = {
     { key = 'j', mods = 'LEADER', action = wezterm.action.SendString 'c:/Julia-1.10.4/bin/julia.exe' },
     { key = 'p', mods = 'LEADER', action = wezterm.action.SendString 'c:/Python313_64/python.exe' },
@@ -54,8 +54,5 @@ return {
       'clink', 'inject', '-q'
   },
   
-  window_pos = {
-    x = 450,
-    y = 200,
-  },
+  window_pos = { x = 450, y = 200 },
 }
