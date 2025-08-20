@@ -4,12 +4,9 @@ local act = wezterm.action
 local config = wezterm.config_builder()
 
 ---------------LOCAL CONFIGURATION---------------
--- load local configuration if available
 local function prequire(m) 
-  local ok, err = pcall(require, m) 
-  if not ok then return {}, err end
-
-  return err
+  local ok, response = pcall(require, m) 
+  return ok and response or {}
 end
 
 local local_config = prequire 'wezterm_local'
