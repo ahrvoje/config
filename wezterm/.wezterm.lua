@@ -68,25 +68,23 @@ local function get_basename(s)
 end
 
 -- https://stackoverflow.com/questions/2235173/what-is-the-naming-standard-for-path-components
-local get_rootname = function(s)
+local function get_rootname(s)
   return s:match("([^/\\]+)%.exe$") or s:match("([^/\\]+)$")
 end
 
-local get_mux_pane = function(pane)
+local function get_mux_pane(pane)
   if not pane or not pane.foreground_process_name then
     -- if nil or already mux just return back
     return pane
   end
 
-  -- if not mux pane, get it
+  -- it's not mux pane, so get it
   return wezterm.mux.get_pane(pane.pane_id)
 end
 
-local get_process_name_fullname_pid_time_argv = function (pane)
+local function get_process_name_fullname_pid_time_argv(pane)
   pane = get_mux_pane(pane)
-  if not pane then return end
-  
-  local info = pane:get_foreground_process_info()
+  info = pane and pane:get_foreground_process_info()
   if not info then return end
   
   return get_rootname(info.name:lower()), info.executable:lower(), info.pid, info.start_time, info.argv
@@ -99,7 +97,7 @@ end
 --   https://wezfurlong.org/wezterm/config/lua/config/skip_close_confirmation_for_processes_named.html
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
-local get_shell = function(pane)
+local function get_shell(pane)
   local shells = {
     cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6,
     wslhost = 7, nu = 8, fish = 9, sh = 10, ksh = 11, dash = 12,
@@ -107,7 +105,7 @@ local get_shell = function(pane)
 
   process_name, full_name, _, _, argv = get_process_name_fullname_pid_time_argv(pane)
   if not process_name or not full_name then
-    return nil
+    return
   end
   
   if process_name == 'bash' and full_name:match('git') then
@@ -123,7 +121,7 @@ local get_shell = function(pane)
   end
 
   if not argv then
-    return nil
+    return
   end
 
   if ((process_name == 'python') or (process_name == 'python3')) and (#argv == 1) then
@@ -137,8 +135,6 @@ local get_shell = function(pane)
   if (process_name == 'julia') and (#argv == 1) then
     return 'julia'
   end
-  
-  return nil
 end
 
 ----------------------------------------------------------------------------------
@@ -177,37 +173,54 @@ end
 
 ----------------------------------------------------------------------------------
 -- 'LEADER + l' log current process, pane, and local conf info into debug overlay
-local action_log_process = function(window, pane)
+local function get_process_info(window, pane)
   ok, process_info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not process_info then
     return
   end
 
   if process_name == 'wezterm' then
-    wezterm.log_info('wezterm overlay')
-  else
-    wezterm.log_info('Process info: ')
-    wezterm.log_info(process_info)
+    process_info = 'Wezterm overlay'
   end
+  
+  return {
+    context = "Process info",
+    data = process_info,
+  }
 end
 
-local function paneinfo_for_pane(pane)
+local function get_pane_info(window, pane)
   local id = pane:pane_id()
   for _, info in ipairs(pane:tab():panes_with_info()) do
-    if info.pane:pane_id() == id then return info end
+    if info.pane:pane_id() == id then
+      return { context = 'Pane info', data = info }
+    end
   end
 end
 
-local action_log_pane_info = function(window, pane)
-  wezterm.log_info('Pane info: ')
-  wezterm.log_info(paneinfo_for_pane(pane))
-
-  wezterm.log_info('alt screen pane: ' .. tostring(pane:is_alt_screen_active()))
+local function get_pane_misc(window, pane)
+  return {
+    context = 'Pane misc',
+    data = {
+      { field = 'alt screen', value = tostring(pane:is_alt_screen_active()) },
+    }
+  }
 end
 
-local action_log_local_config = function(window, pane)
-  wezterm.log_info('Local configuration: ')
-  wezterm.log_info(local_config)
+local function get_local_config(window, pane)
+  return {
+    context = 'Local configuration',
+    data = local_config,
+  }
+end
+
+local action_log_debug_info = function(window, pane)
+  wezterm.log_info({
+    get_process_info(window, pane),
+    get_pane_info(window, pane),
+    get_pane_misc(window, pane),
+    get_local_config(window, pane),
+  })
 end
 
 ----------------------------------------------------------------------------------
@@ -479,11 +492,7 @@ config.keys = {
   { key = 'd',          mods = 'CTRL',   action = wezterm.action_callback( action_exit_shell ) },
   { key = 'k',          mods = 'LEADER', action = wezterm.action_callback( action_kill_process ) },
   { key = 'x',          mods = 'LEADER', action = wezterm.action_callback( action_kill_pane ) },
-  { key = 'l',          mods = 'LEADER', action = act.Multiple {  -- debugging log & info
-    wezterm.action_callback( action_log_process ),
-    wezterm.action_callback( action_log_pane_info ),
-    wezterm.action_callback( action_log_local_config ),
-  }},
+  { key = 'l',          mods = 'LEADER', action = wezterm.action_callback( action_log_debug_info ) },
 
   { key = 'Home',       mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_home ) },
   { key = 'End',        mods = 'CTRL',       action = wezterm.action_callback( action_ctrl_end ) },
