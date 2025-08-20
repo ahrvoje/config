@@ -378,11 +378,11 @@ end
 local action_Esc = function(window, pane)
   shell = get_shell(pane)
   process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
-
+  
   if window:leader_is_active() then
     -- cancel leader if active
     window:perform_action(act.SendKey{ key='Escape' }, pane)
-
+  
   elseif not process_name then
     -- exit overlay if active
     window:perform_action(act.SendKey{ key='Escape' }, pane)
@@ -395,18 +395,18 @@ local action_Esc = function(window, pane)
       -- alt screen app is running, e.g. nvim...
       window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
     end
-
+  
   elseif not shell then
   -- if some app running, but not shell, e.g. nvim
     -- there were problems with sending key "Escape" or string "0x1B" directly
     -- Ctrl+[ is old portable terminal trick for sending Esc char 0x1B
     -- apparently Ctrl shaves off high bit of [ char 0x5B leaving 0x1B
     window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
-
+  
   elseif line_is_empty(pane) then
     -- send Esc if line is empty
     window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
-
+  
   -- last option is to clear the line
   elseif shell == 'cmd' then
     window:perform_action(act.Multiple{
@@ -414,7 +414,7 @@ local action_Esc = function(window, pane)
       act.SendKey{ key='Home', mods='SHIFT' },
       act.SendKey{ key='Delete', mods='NONE' },
     }, pane)
-
+  
   elseif shell == 'pwsh' or shell == 'powershell' then
     -- PowerShell 5 & 7, works w/o PS key bind, w & w/o Constrained Language Mode (CLM)
     -- Ctrl+Home & Ctrl+End delete from cursor to home & end
@@ -422,7 +422,7 @@ local action_Esc = function(window, pane)
       act.SendKey{ key='Home', mods='CTRL' },
       act.SendKey{ key='End',  mods='CTRL' },
     }, pane)
-
+  
   -- all left cases will get the last available option
   else
     -- Bash/Zsh/etc., send Ctrl-A Ctrl-K to clear line
@@ -666,57 +666,41 @@ local format_left_status = function(window, pane)
   })
 end
 
-local format_right_status = function(window, pane)
-  if #key_icons > 0 then
-    key_tables_text = ' < Keys stack'
-  else
-    key_tables_text = ''
-  end
-
-  shell = get_shell(pane)
-  process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
-
-  if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
-    running_color = '#000000'
-  else
-    -- show red fire icon for some running process in progress
-    running_color = '#FF0000'
-  end
-  
-  if window:leader_is_active() then
-    leader_color = '#FF6060'
-  else
-    leader_color = '#000000'
-  end
-
-  -- Battery
-  ----------
+local function get_battery_status()
   battery_info = wezterm:battery_info()
   if #battery_info == 0 then
-    battery_color = ''
-    battery_icon = ''
-    battery_text = ''
-  else
-    battery_charge = battery_info[1]['state_of_charge']
-    battery_text = math.ceil(100 * battery_charge) .. '%  '
-
-    if battery_charge < 0.25 then
-    battery_color = 'Red'
-    battery_icon = wezterm.nerdfonts.md_battery_20
-    elseif battery_charge < 0.5 then
-    battery_color = 'Yellow'
-    battery_icon = wezterm.nerdfonts.md_battery_50
-    else
-    battery_color = 'Green'
-    battery_icon = wezterm.nerdfonts.md_battery
-    end
+    return {
+      color = '',
+      icon = '',
+      text = '',
+    }
   end
 
-  -- Process start time  
-  ---------------------
+  battery_charge = battery_info[1]['state_of_charge']
+  battery_text = math.ceil(100 * battery_charge) .. '%  '
+
+  if battery_charge < 0.25 then
+    battery_color = 'Red'
+    battery_icon = wezterm.nerdfonts.md_battery_20
+  elseif battery_charge < 0.5 then
+    battery_color = 'Yellow'
+    battery_icon = wezterm.nerdfonts.md_battery_50
+  else
+    battery_color = 'Green'
+    battery_icon = wezterm.nerdfonts.md_battery
+  end
+
+  return {
+    color = battery_color,
+    icon  = batter_icon,
+    text  = battery_text,
+  }
+end
+
+local function get_pane_start_time(process_time)
   if not process_time then
     -- if wezterm overlay like debug or launcher
-    time_status = '------------------------------'
+    return '------------------------------'
   else
     if wezterm.target_triple:match('windows') then
       -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
@@ -726,8 +710,23 @@ local format_right_status = function(window, pane)
       unix_time = process_time;
     end
 
-    time_status = 'Started: ' .. os.date('%b %d %X', unix_time)
+    return 'Started: ' .. os.date('%b %d %X', unix_time)
   end
+end
+
+local format_right_status = function(window, pane)
+  shell = get_shell(pane)
+  process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
+
+  if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
+    -- show idle status for idle shell, wezterm overlay, alt screen app
+    running_color = '#000000'
+  else
+    -- show red fire icon for some running process in progress
+    running_color = '#FF0000'
+  end
+  
+  battery_status = get_battery_status()
 
   -- Format top status
   --------------------
@@ -735,15 +734,15 @@ local format_right_status = function(window, pane)
     { Foreground = { Color = 'Yellow' } },
     { Text = table.concat(key_icons, ' ') },
     { Foreground = { Color = 'Gray' } },
-    { Text = key_tables_text .. '        ' },
+    { Text = (#key_icons > 0) and ' < Keys stack' or '' .. '        ' },
     { Foreground = { Color = running_color } },
     { Text = wezterm.nerdfonts.md_fire },
-    { Foreground = { Color = leader_color } },
+    { Foreground = { Color = window:leader_is_active() and '#FF6060' or '#000000' } },
     { Text = wezterm.nerdfonts.md_lightning_bolt .. '  ' },
-    { Foreground = { Color = battery_color } },
-    { Text = battery_icon .. battery_text .. '' },
+    { Foreground = { Color = battery_status.color } },
+    { Text = battery_status.icon .. battery_status.text .. '' },
     { Foreground = { Color = 'Gray' } },
-    { Text = time_status .. '      ' },
+    { Text = get_pane_start_time(process_time) .. '      ' },
   })
 end
 
