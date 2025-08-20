@@ -3,26 +3,24 @@ local act = wezterm.action
 
 local config = wezterm.config_builder()
 
--- load local configuration if available --------
+---------------LOCAL CONFIGURATION---------------
+-- load local configuration if available
 local function prequire(m) 
   local ok, err = pcall(require, m) 
-  if not ok then return nil, err end
+  if not ok then return {}, err end
 
   return err
 end
 
 local local_config = prequire 'wezterm_local'
--------------------------------------------------
 
--- apply local config
-if local_config then
-  config.leader       = local_config.leader
-  config.default_prog = local_config.default_prog
-  config.font         = local_config.font
-  config.font_size    = local_config.font_size
-  config.launch_menu  = local_config.launch_menu
-  config.window_frame = local_config.window_frame
-end
+config.leader       = local_config.leader
+config.default_prog = local_config.default_prog
+config.font         = local_config.font
+config.font_size    = local_config.font_size
+config.launch_menu  = local_config.launch_menu
+config.window_frame = local_config.window_frame
+-------------------------------------------------
 
 config.adjust_window_size_when_changing_font_size = false
 config.animation_fps = 120
@@ -755,8 +753,8 @@ end)
 
 -- Startup window position is loaded from local configuration
 wezterm.on('gui-startup', function(cmd)
-  x = local_config and local_config.window_pos and local_config.window_pos.x or 200
-  y = local_config and local_config.window_pos and local_config.window_pos.y or 32
+  x = local_config.window_pos and local_config.window_pos.x or 200
+  y = local_config.window_pos and local_config.window_pos.y or 32
   
   wezterm.mux.spawn_window(cmd or { position = { x = x , y = y } })
 end)
