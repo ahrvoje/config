@@ -11,8 +11,18 @@ local function prequire(m)
   return err
 end
 
-local local_config = prequire 'local_config'
+local local_config = prequire 'wezterm_local'
 -------------------------------------------------
+
+-- apply local config
+if local_config then
+  config.leader       = local_config.leader
+  config.default_prog = local_config.default_prog
+  config.font         = local_config.font
+  config.font_size    = local_config.font_size
+  config.launch_menu  = local_config.launch_menu
+  config.window_frame = local_config.window_frame
+end
 
 config.adjust_window_size_when_changing_font_size = false
 config.animation_fps = 120
@@ -28,18 +38,6 @@ config.scrollback_lines = 200000
 config.show_close_tab_button_in_tabs = false
 config.status_update_interval = 300
 config.window_decorations = 'RESIZE'
-
-if wezterm.target_triple:match('darwin') then
-  config.window_frame = { font_size = 18 }
-else
-  config.window_frame = { font_size = 12 }
-end
-
-if wezterm.target_triple:match('windows') then
-  config.leader = { key = '`', mods = 'ALT', timeout_milliseconds = 9999 }
-elseif wezterm.target_triple:match('darwin') then
-  config.leader = { key = '“', mods = 'SUPER', timeout_milliseconds = 9999 }
-end
 
 -- Selection of dark themes with acceptable contrast
 --
@@ -586,7 +584,7 @@ if wezterm.target_triple:match('darwin') then
 
 end
 
--- Local key macros loaded from local configuration
+-- Local key binds loaded from local configuration
 if local_config and local_config['keys'] then
   for _, v in ipairs(local_config.keys) do
     table.insert(config.keys, v)
@@ -615,48 +613,6 @@ config.mouse_bindings = {
     action = act.ScrollByLine(1),
   },
 }
-
-
-local launch_menu = {}
-
-if wezterm.target_triple:match('windows') then
-  table.insert(launch_menu, {
-    label = 'zsh (msys64)',
-    args = { 'C:/msys64/usr/bin/zsh.exe', '-l' },
-  })
-
-  table.insert(launch_menu, {
-    label = 'Neovim',
-    args = { 'nvim.bat' },
-  })
-
-  table.insert(launch_menu, {
-    label = 'Git Bash',
-    args = { 'c:/Program Files/Git/bin/bash.exe', '-i', '-l' },
-  })
-  
-  table.insert(launch_menu, {
-    label = 'PowerShell 7',
-    args = { 'pwsh.exe', '-NoLogo'},
-  })
-  
-  table.insert(launch_menu, {
-    label = 'MSYS2',
-    args = {
-      'C:/msys64/usr/bin/env.exe',
-        'MSYSTEM=MSYS',
-        '/bin/bash',
-        '--login'
-    },
-  })
-    
-  table.insert(launch_menu, {
-    label = 'Nu',
-    args = { 'nu.bat' },
-  })
-end
-
-config.launch_menu = launch_menu
 
 -- Top left & right status bar
 local format_left_status = function(window, pane)
@@ -799,36 +755,11 @@ end)
 
 -- Startup window position is loaded from local configuration
 wezterm.on('gui-startup', function(cmd)
-  if local_config and local_config['window_pos'] then
-    x = local_config['window_pos']['x']
-    y = local_config['window_pos']['y']
-  end
+  x = local_config and local_config.window_pos and local_config.window_pos.x or 200
+  y = local_config and local_config.window_pos and local_config.window_pos.y or 32
   
-  if x == nil or y == nil then
-    x = 200
-    y = 32
-  end
-  
-  wezterm.mux.spawn_window(cmd or { position = { x = x, y = y } })
+  wezterm.mux.spawn_window(cmd or { position = { x = x , y = y } })
 end)
-
-if wezterm.target_triple:match('darwin') then
-  config.font_size = 14
-end
-
-if wezterm.target_triple:match('windows') then
-  config.font = wezterm.font 'Consolas'
-  config.font_size = 12
-  
-  config.default_prog = {
-    'cmd.exe', '/s', '/k',
-      -- set Unicode coding page 65001
-      'chcp', '65001', '>', 'nul', '&&',
-      
-      -- and inject clink into the command prompt
-      'clink', 'inject', '-q'
-  }
-end
 
 return config
 
