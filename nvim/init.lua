@@ -4,13 +4,46 @@ vim.g.maplocalleader = " "
 vim.opt.fileformats = { "dos", "unix", "mac" } -- detection order
 vim.opt.fixeol = false
 
+-- set terminal UserVar 'nvim' to 'on'/'off' on enter/exit
+local function b64(s)
+  local out = vim.fn.system({ 'base64' }, s)
+  return (out:gsub('[\r\n]+$', ''))
+end
+
+local function set_user_var(name, val)
+  local osc = string.format('\27]1337;SetUserVar=%s=%s\7', name, b64(val))
+  if not os.getenv('TMUX') then
+    io.stdout:write(osc)
+  else
+    io.stdout:write('\27Ptmux;\27' .. osc .. '\27\\')
+  end
+  io.stdout:flush()
+end
+
+local grp = vim.api.nvim_create_augroup('WezTermNvimVar', { clear = true })
+vim.api.nvim_create_autocmd('VimEnter', {
+  group = grp,
+  callback = function()
+    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'on') end
+  end,
+})
+vim.api.nvim_create_autocmd({ 'VimLeavePre', 'VimLeave' }, {
+  group = grp,
+  callback = function()
+    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'off') end
+  end,
+})
+
 -- highlight on yank
-vim.cmd [[
-  augroup YankHighlight
-    autocmd!
-    autocmd TextYankPost * silent! lua vim.highlight.on_yank{higroup="IncSearch", timeout=200}
-  augroup END
-]]
+local group = vim.api.nvim_create_augroup('YankHighlight', { clear = true })
+vim.api.nvim_create_autocmd('TextYankPost', {
+  group = group,
+  pattern = '*',
+  callback = function()
+    vim.highlight.on_yank { higroup = 'IncSearch', timeout = 200 }
+  end,
+  desc = 'Briefly highlight yanked text',
+})
 
 -- autosave files on focus lost
 local grp = vim.api.nvim_create_augroup("autosave_buffer", { clear = true })

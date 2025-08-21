@@ -2,6 +2,27 @@
 
 [ -f $HOME/.zshlocal ] && source $HOME/.zshlocal
 
+# set terminal UserVar 'zsh' to 'on'/'off' on enter/exit
+set_user_var() {
+  local name="$1"; shift
+  # strip CR and LF to be Windows-safe
+  local val_b64; val_b64=$(printf "%s" "$*" | base64 | tr -d '\r\n')
+
+  # tmux-safe OSC 1337 (works fine when not in tmux too)
+  local osc=$'\e]1337;SetUserVar='"$name"'='"$val_b64"$'\a'
+  if [[ -n "$TMUX" ]]; then
+    printf '\ePtmux;\e%s\e\\' "$osc"
+  else
+    printf '%s' "$osc"
+  fi
+}
+# on start
+set_user_var zsh on
+# on exit
+autoload -Uz add-zsh-hook
+_z_wez_zshexit() { set_user_var zsh off }
+add-zsh-hook zshexit _z_wez_zshexit
+
 # special Windows-specific cases for msys64/usr/bin/zsh.exe
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$MSYSTEM" != "" || "$WSL_DISTRO_NAME" != "" ]]; then
   for map in emacs viins; do

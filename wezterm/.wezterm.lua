@@ -5,8 +5,13 @@ local config = wezterm.config_builder()
 
 --------------DEFAULT CONFIGURATION--------------
 local default_config = {
-  -- initial windows position
-  window_pos = { x = 200, y = 32 },
+  -- leader       = nil,
+  -- font         = nil,
+  -- font_size    = nil,
+  -- window_frame = nil,
+  -- launch_menu  = nil,
+  -- default_prog = nil,
+  window_pos   = { x = 200, y = 32 },  -- initial window position
 }
 -------------------------------------------------
 
@@ -18,12 +23,12 @@ end
 
 local local_config = prequire 'wezterm_local'
 
-config.leader       = local_config.leader
-config.font         = local_config.font
-config.font_size    = local_config.font_size
-config.window_frame = local_config.window_frame
-config.launch_menu  = local_config.launch_menu
-config.default_prog = local_config.default_prog
+config.leader       = local_config.leader       or default_config.leader
+config.font         = local_config.font         or default_config.font
+config.font_size    = local_config.font_size    or default_config.font_size
+config.window_frame = local_config.window_frame or default_config.window_frame
+config.launch_menu  = local_config.launch_menu  or default_config.launch_menu
+config.default_prog = local_config.default_prog or default_config.default_prog
 -- local_config.keys applied after config.keys
 -------------------------------------------------
 
@@ -211,6 +216,20 @@ local function get_pane_info(window, pane)
   end
 end
 
+local function get_pane_user_vars(window, pane)
+  return {
+    context = 'Pane user vars',
+    data = pane:get_user_vars(),
+  }
+end
+
+local function get_pane_metadata(window, pane)
+  return {
+    context = 'Pane metadata',
+    data = pane:get_metadata(),
+  }
+end
+
 local function get_pane_misc(window, pane)
   return {
     context = 'Pane misc',
@@ -231,6 +250,8 @@ local action_log_debug_info = function(window, pane)
   wezterm.log_info({
     get_process_info(window, pane),
     get_pane_info(window, pane),
+    get_pane_user_vars(window, pane),
+    get_pane_metadata(window, pane),
     get_pane_misc(window, pane),
     get_local_config(window, pane),
   })
@@ -712,6 +733,12 @@ local format_right_status = function(window, pane)
   -- Format top status
   --------------------
   return wezterm.format({
+    { Foreground = { Color = pane:get_user_vars().clink=='on' and 'Orange' or 'Gray' } },
+    { Text = wezterm.nerdfonts.md_alpha_c..'    ' },
+    { Foreground = { Color = pane:get_user_vars().zsh=='on' and 'Orange' or 'Gray' } },
+    { Text = wezterm.nerdfonts.md_alpha_z..'    ' },
+    { Foreground = { Color = pane:get_user_vars().nvim=='on' and 'Orange' or 'Gray' } },
+    { Text = wezterm.nerdfonts.custom_neovim..'    ' },
     { Foreground = { Color = 'Yellow' } },
     { Text = table.concat(key_icons, ' ') },
     { Foreground = { Color = 'Gray' } },
