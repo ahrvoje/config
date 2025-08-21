@@ -33,8 +33,8 @@ config.default_prog = local_config.default_prog or default_config.default_prog
 -------------------------------------------------
 
 config.adjust_window_size_when_changing_font_size = false
-config.animation_fps = 120
-config.max_fps = 120
+config.animation_fps = 60
+config.max_fps = 60
 config.audible_bell = 'Disabled'
 config.canonicalize_pasted_newlines = 'CarriageReturnAndLineFeed'
 config.check_for_updates = false
@@ -66,15 +66,38 @@ config.color_scheme = 'Bright (base16)'
 
 
 -- Equivalent to POSIX basename(3)
--- Given '/foo/bar' returns 'bar'
--- Given 'c:\\foo\\bar' returns 'bar'
+-- '/foo/bar'         → 'bar'
+-- '/foo/bar/'        → ''
+-- 'c:\\foo\\bar'     → 'bar'
+-- 'C:\\foo\\bar.exe' → 'bar.exe'
 local function get_basename(s)
-  return string.gsub(s, '(.*[/\\])(.*)', '%2')
+  s = s:gsub('[/\\]+$', '')
+  return s:match('([^/\\]+)$')
 end
 
 -- https://stackoverflow.com/questions/2235173/what-is-the-naming-standard-for-path-components
-local function get_rootname(s)
-  return s:match('([^/\\]+)%.exe$') or s:match('([^/\\]+)$')
+--   'C:\\a\\b\\file.tar.gz' -> 'file.tar'
+--   '/a/b/file.txt'         -> 'file'
+--   '/a/b/.bashrc'          -> '.bashrc'
+--   '/a/b/dir/'             -> 'dir'
+local function get_rootname(path)
+  if not path then return nil end
+
+  local base = get_basename(path)
+  if not base then return nil end
+
+  -- dotfile? treat as no extension
+  if base:sub(1,1) == '.' then
+    return base
+  end
+
+  -- find position before the LAST dot (if any)
+  local idx = base:match('^.*()%.[^%.]*$')  -- capture index before final '.ext'
+  if not idx then
+    return base
+  end
+
+  return base:sub(1, idx-1)
 end
 
 -- normalize windows path by stripping URI scheme
@@ -109,14 +132,14 @@ local function to_unix_time(t)
   return math.floor(t / 10000000 - 134774 * 86400);
 end
 
-local function get_process_name_fullname_pid_time_argv(pane)
+local function get_process_name_fullname_cwd_pid_time_argv(pane)
   local pane = get_mux_pane(pane)
   if not pane then return end
 
   local ok, info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not info then return end
   
-  return get_rootname(info.name:lower()), info.executable:lower(), info.pid, to_unix_time(info.start_time), info.argv
+  return get_rootname(info.name:lower()), info.executable:lower(), info.cwd, info.pid, to_unix_time(info.start_time), info.argv
 end
 
 ----------------------------------------------------------------------------------
@@ -126,18 +149,15 @@ end
 --   https://wezfurlong.org/wezterm/config/lua/config/skip_close_confirmation_for_processes_named.html
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
-local function get_shell(pane)
+local function get_shell(process_name, fullname, argv)
+  if not process_name or not fullname or not argv then return end
+
   local shells = {
     cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6,
     wslhost = 7, nu = 8, fish = 9, sh = 10, ksh = 11, dash = 12,
   }
-
-  local process_name, full_name, _, _, argv = get_process_name_fullname_pid_time_argv(pane)
-  if not process_name or not full_name then
-    return
-  end
   
-  if process_name == 'bash' and full_name:match('git') then
+  if process_name == 'bash' and fullname:match('git') then
     return 'gitbash'
   end
   
@@ -145,7 +165,7 @@ local function get_shell(pane)
     return process_name
   end
 
-  if full_name:match('msys') and process_name:match('env') then
+  if fullname:match('msys') and process_name:match('env') then
     return 'msys'
   end
 
@@ -166,6 +186,15 @@ local function get_shell(pane)
   end
 end
 
+local function get_pane_shell(pane)
+  local process_name, fullname, _, _, _, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
+  if not process_name or not fullname or not argv then
+    return
+  end
+
+  return get_shell(process_name, fullname, argv)
+end
+
 ----------------------------------------------------------------------------------
 -- 'Ctrl-c' key has two roles:
 --   KeyboardInterrupt if there is no selection
@@ -182,7 +211,7 @@ end
 ----------------------------------------------------------------------------------
 -- 'Ctrl-d' close shell, taking care of special cases like PowerShell, Python...
 local action_exit_shell = function(window, pane)
-  local shell = get_shell(pane)
+  local shell = get_pane_shell(pane)
   if shell == 'python' then
     window:perform_action(act.SendString 'exit()\r', pane)
 
@@ -206,10 +235,6 @@ local function get_process_info(window, pane)
   local ok, process_info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not process_info then
     return
-  end
-
-  if process_name == 'wezterm' then
-    process_info = 'Wezterm overlay'
   end
   
   return {
@@ -305,8 +330,8 @@ end
 --   Default line-start/history-up/history-down if shell is active
 --   Scroll-top/scroll-up/scroll-down if no shell/prompt is active
 local action_home = function(window, pane)
-  local shell = get_shell(pane)
-  if not shell or shell ~= '' then
+  local shell = get_pane_shell(pane)
+  if not shell then
     -- wezterm overlay or actual shell (e.g. zsh)
     window:perform_action(act.SendKey{ key='Home', mods='NONE' }, pane)
   else
@@ -315,8 +340,8 @@ local action_home = function(window, pane)
 end
 
 local action_up = function(window, pane)
-  local shell = get_shell(pane)
-  if not shell or shell ~= '' then
+  local shell = get_pane_shell(pane)
+  if not shell then
     window:perform_action(act.SendKey{ key='UpArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(-1), pane)
@@ -324,8 +349,8 @@ local action_up = function(window, pane)
 end
 
 local action_down = function(window, pane)
-  local shell = get_shell(pane)
-  if not shell or shell ~= '' then
+  local shell = get_pane_shell(pane)
+  if not shell then
     window:perform_action(act.SendKey{ key='DownArrow', mods='NONE' }, pane)
   else
     window:perform_action(act.ScrollByLine(1), pane)
@@ -335,7 +360,7 @@ end
 ----------------------------------------------------------------------------------
 -- Clear screen action
 local action_clear_screen = function(window, pane)
-  local shell = get_shell(pane)
+  local shell = get_pane_shell(pane)
   
   if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' or shell == 'nu' then
     -- activates and works for Nushell in Windows
@@ -352,7 +377,7 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + k' - Kill Process action
 local action_kill_process = function(window, pane)
-  local process_name, _, pid, _, _ = get_process_name_fullname_pid_time_argv( pane )
+  local process_name, _, _, pid, _, _ = get_process_name_fullname_cwd_pid_time_argv( pane )
   if process_name == 'wezterm' then
     return
   end
@@ -421,8 +446,8 @@ local line_is_empty = function (pane)
 end
 
 local action_Esc = function(window, pane)
-  local shell = get_shell(pane)
-  local process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
+  local shell = get_pane_shell(pane)
+  local process_name, _, _, _, _, _ = get_process_name_fullname_cwd_pid_time_argv(pane)
   
   if window:leader_is_active() then
     -- cancel leader if active
@@ -671,8 +696,8 @@ end
 local function get_pane_cwd(pane)
   if not pane or not pane.get_current_working_dir then return end
 
-  local cwd = pane:get_current_working_dir()
-  if not cwd then return end
+  local ok, cwd = pcall(pane.get_current_working_dir, pane)
+  if not ok or not cwd then return end
 
   return normalize_path(tostring(cwd))
 end
@@ -732,9 +757,8 @@ local function get_pane_start_time(process_time)
 end
 
 local format_right_status = function(window, pane)
-  local cwd = get_pane_cwd(pane)
-  local process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
-  local shell = get_shell(pane)
+  local process_name, fullname, cwd, _, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
+  local shell = process_name and fullname and argv and get_shell(process_name, fullname, argv) or nil
   
   local branch, branch_status
   branch = get_branch(cwd)
@@ -752,22 +776,19 @@ local format_right_status = function(window, pane)
   status = pane:get_user_vars().nvim
   local nvim_color = status and status=='on' and '#BB55DD' or status=='off' and '#55AA88' or '#666666'
   
-  local running_time, days
-  if not process_time then
-    running_time = ''
-  else
+  local running_time, days, running_color = '', 0, ''
+  if process_time then
     running_time = os.time() - process_time
     days = math.floor(running_time / 86400)
     running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
-  end
-  
-  local running_color
-  if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
-    -- show idle status for idle shell, wezterm overlay, alt screen app
-    running_color = '#4488DD'
-  else
-    -- show red running time for some process in progress
-    running_color = '#E05500'
+
+    if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
+      -- show idle status for idle shell, wezterm overlay, alt screen app
+      running_color = '#4488DD'
+    else
+      -- show red running time for some process in progress
+      running_color = '#E05500'
+    end
   end
   
   local battery_status = get_battery_status()
@@ -827,7 +848,7 @@ local icons_names = {
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
   local pane = tab.active_pane
   
-  local process_name, _, _, _, _ = get_process_name_fullname_pid_time_argv(pane)
+  local process_name, fullname, _, _, _, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
   if not process_name or process_name == 'wezterm' then
     -- leave formatting to wezterm
     return nil
@@ -840,7 +861,7 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
     title_prefix = ''
   end
   
-  local name = get_shell(pane)
+  local name = get_shell(process_name, fullname, argv)
   if not name or name == '' then
     name = process_name
   end
