@@ -82,6 +82,17 @@ local function get_mux_pane(pane)
   return wezterm.mux.get_pane(pane.pane_id)
 end
 
+local function to_unix_time(t)
+  if not wezterm.target_triple:match('windows') then
+    -- already Unix time
+    return t
+  end
+
+  -- convert Windows to Unix time, Windows epoch date is Jan 01, 1601 - 134774 days before Unix
+  -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
+  return math.floor(t / 10000000 - 134774 * 86400);
+end
+
 local function get_process_name_fullname_pid_time_argv(pane)
   local pane = get_mux_pane(pane)
   if not pane then return end
@@ -89,7 +100,7 @@ local function get_process_name_fullname_pid_time_argv(pane)
   local ok, info = pcall(pane.get_foreground_process_info, pane)
   if not ok or not info then return end
   
-  return get_rootname(info.name:lower()), info.executable:lower(), info.pid, info.start_time, info.argv
+  return get_rootname(info.name:lower()), info.executable:lower(), info.pid, to_unix_time(info.start_time), info.argv
 end
 
 ----------------------------------------------------------------------------------
@@ -658,22 +669,12 @@ local function get_battery_status()
   }
 end
 
-local function to_unix_time(t)
-  if wezterm.target_triple:match('windows') then
-    -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
-    -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-    return math.floor(t / 10000000 - 134774 * 86400);
-  end
-
-  return t
-end
-
 local function get_pane_start_time(process_time)
   if not process_time then
     -- if wezterm overlay like debug or launcher
     return '------------------------------'
   else
-    return 'Started: ' .. os.date('%b %d %X', to_unix_time(process_time))
+    return 'Started: ' .. os.date('%b %d %X', process_time)
   end
 end
 
@@ -692,7 +693,7 @@ local format_right_status = function(window, pane)
   if not process_time then
     running_time = ''
   else
-    running_time = os.time() - to_unix_time(process_time)
+    running_time = os.time() - process_time
     days = math.floor(running_time / 86400)
     running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
   end
