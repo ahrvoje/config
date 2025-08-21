@@ -84,8 +84,10 @@ end
 
 local function get_process_name_fullname_pid_time_argv(pane)
   local pane = get_mux_pane(pane)
-  local info = pane and pane:get_foreground_process_info()
-  if not info then return end
+  if not pane then return end
+
+  local ok, info = pcall(pane.get_foreground_process_info, pane)
+  if not ok or not info then return end
   
   return get_rootname(info.name:lower()), info.executable:lower(), info.pid, info.start_time, info.argv
 end
@@ -618,8 +620,8 @@ config.mouse_bindings = {
 -- Top left & right status bar
 local format_left_status = function(window, pane)
   return wezterm.format({
-    { Foreground = { Color = '#66AAAA' } },
-    { Text = window:active_workspace() .. ' : ' .. pane:get_domain_name() },
+    { Foreground = { Color = window:leader_is_active() and '#FF6060' or '#000000' } },
+    { Text = wezterm.nerdfonts.md_lightning_bolt },
   })
 end
 
@@ -656,36 +658,52 @@ local function get_battery_status()
   }
 end
 
-local function get_pane_start_time(process_time)
-  local unix_time
+local function to_unix_time(t)
+  if wezterm.target_triple:match('windows') then
+    -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
+    -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
+    return math.floor(t / 10000000 - 134774 * 86400);
+  end
 
+  return t
+end
+
+local function get_pane_start_time(process_time)
   if not process_time then
     -- if wezterm overlay like debug or launcher
     return '------------------------------'
   else
-    if wezterm.target_triple:match('windows') then
-      -- convert Windows to UNIX time, Windows epoch date is Jan 01, 1601 - 134774 days before UNIX
-      -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-      unix_time = math.floor(process_time / 10000000 - 134774 * 86400);
-    else
-      unix_time = process_time;
-    end
-
-    return 'Started: ' .. os.date('%b %d %X', unix_time)
+    return 'Started: ' .. os.date('%b %d %X', to_unix_time(process_time))
   end
 end
 
 local format_right_status = function(window, pane)
   local shell = get_shell(pane)
-  local process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
+  local process_name, _, pid, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
+  
+  local ok, cwd = pcall(wezterm.procinfo.current_working_dir_for_pid, pid)
+  if not ok or not cwd or cwd == '' then
+    cwd = ''
+  else
+    cwd = cwd:gsub('^file://', ''):gsub('^%a+://', '')  -- strip URI schemes if present
+  end
+
+  local running_time, days
+  if not process_time then
+    running_time = ''
+  else
+    running_time = os.time() - to_unix_time(process_time)
+    days = math.floor(running_time / 86400)
+    running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
+  end
 
   local running_color
   if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
     -- show idle status for idle shell, wezterm overlay, alt screen app
-    running_color = '#000000'
+    running_color = '#3388AA'
   else
-    -- show red fire icon for some running process in progress
-    running_color = '#FF0000'
+    -- show red running time for some process in progress
+    running_color = '#E05500'
   end
   
   local battery_status = get_battery_status()
@@ -696,11 +714,13 @@ local format_right_status = function(window, pane)
     { Foreground = { Color = 'Yellow' } },
     { Text = table.concat(key_icons, ' ') },
     { Foreground = { Color = 'Gray' } },
-    { Text = (#key_icons > 0) and ' < Keys stack' or '' .. '        ' },
+    { Text = (#key_icons > 0) and ' < Keys stack    ' or '' },
+    { Foreground = { Color = 'Gray' } },
+    { Text = cwd..'    ' },
+    { Foreground = { Color = '#66AAAA' } },
+    { Text = window:active_workspace()..' : '..pane:get_domain_name()..'    ' },
     { Foreground = { Color = running_color } },
-    { Text = wezterm.nerdfonts.md_fire },
-    { Foreground = { Color = window:leader_is_active() and '#FF6060' or '#000000' } },
-    { Text = wezterm.nerdfonts.md_lightning_bolt .. '  ' },
+    { Text = running_time..'    ' },
     { Foreground = { Color = battery_status.color } },
     { Text = battery_status.icon .. battery_status.text .. '' },
     { Foreground = { Color = 'Gray' } },
@@ -717,7 +737,7 @@ wezterm.on('update-status', function(window, pane)
 end)
 
 -- Format tab title
-icons_names = {
+local icons_names = {
   nvim       = { wezterm.nerdfonts.custom_neovim,    'Neovim' },
   bash       = { wezterm.nerdfonts.md_bash,          'bash' },
   gitbash    = { wezterm.nerdfonts.dev_git,          'git bash' },
@@ -753,7 +773,7 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
     name = process_name
   end
   
-  local icon_name = icons_names[name] or { '>', name }  
+  local icon_name = icons_names[name] or { '>', name }
   
   return wezterm.format({
     { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. pane.pane_id },
