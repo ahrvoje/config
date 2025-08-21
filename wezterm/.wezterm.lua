@@ -693,15 +693,6 @@ local format_left_status = function(window, pane)
   })
 end
 
-local function get_pane_cwd(pane)
-  if not pane or not pane.get_current_working_dir then return end
-
-  local ok, cwd = pcall(pane.get_current_working_dir, pane)
-  if not ok or not cwd then return end
-
-  return normalize_path(tostring(cwd))
-end
-
 local function get_branch(dir)
   if not dir then return end
 
@@ -747,13 +738,18 @@ local function get_battery_status()
   }
 end
 
-local function get_pane_start_time(process_time)
-  if not process_time then
-    -- if wezterm overlay like debug or launcher
+wezterm.GLOBAL.pane_start_time_cache = wezterm.GLOBAL.pane_start_time_cache or {}
+local function get_pane_start_time(pane_id, process_time)
+  if not pane_id or not process_time then
     return '------------------------------'
-  else
-    return wezterm.nerdfonts.fa_clock..' '..os.date('%b %d %X', process_time)
   end
+
+  key = tostring(pane_id)  -- wezterm.GLOBAL is JSON-based accepting only string keys
+  if not wezterm.GLOBAL.pane_start_time_cache[key] then
+    wezterm.GLOBAL.pane_start_time_cache[key] = wezterm.nerdfonts.fa_clock..' '..os.date('%b %d %X', process_time)
+  end
+
+  return wezterm.GLOBAL.pane_start_time_cache[key]
 end
 
 local format_right_status = function(window, pane)
@@ -817,7 +813,7 @@ local format_right_status = function(window, pane)
     { Foreground = { Color = battery_status.color } },
     { Text = battery_status.icon .. battery_status.text .. '' },
     { Foreground = { Color = 'Gray' } },
-    { Text = get_pane_start_time(process_time) .. '      ' },
+    { Text = get_pane_start_time(pane:pane_id(), process_time) .. '      ' },
   })
 end
 
