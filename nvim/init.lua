@@ -5,13 +5,8 @@ vim.opt.fileformats = { "dos", "unix", "mac" } -- detection order
 vim.opt.fixeol = false
 
 -- set terminal UserVar 'nvim' to 'on'/'off' on enter/exit
-local function b64(s)
-  local out = vim.fn.system({ 'base64' }, s)
-  return (out:gsub('[\r\n]+$', ''))
-end
-
-local function set_user_var(name, val)
-  local osc = string.format('\27]1337;SetUserVar=%s=%s\7', name, b64(val))
+local function set_user_var(name, b64val)
+  local osc = string.format('\27]1337;SetUserVar=%s=%s\7', name, b64val)
   if not os.getenv('TMUX') then
     io.stdout:write(osc)
   else
@@ -20,17 +15,17 @@ local function set_user_var(name, val)
   io.stdout:flush()
 end
 
-local grp = vim.api.nvim_create_augroup('WezTermNvimVar', { clear = true })
+local grp = vim.api.nvim_create_augroup('NvimVar', { clear = true })
 vim.api.nvim_create_autocmd('VimEnter', {
   group = grp,
   callback = function()
-    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'on') end
+    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'b24=') end  -- base64('on') = 'b24='
   end,
 })
 vim.api.nvim_create_autocmd({ 'VimLeavePre', 'VimLeave' }, {
   group = grp,
   callback = function()
-    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'off') end
+    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'b2Zm') end  -- base64('off') = 'b2Zm'
   end,
 })
 

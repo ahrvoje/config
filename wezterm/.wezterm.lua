@@ -44,7 +44,7 @@ config.initial_cols = 124
 config.initial_rows = 36
 config.scrollback_lines = 200000
 config.show_close_tab_button_in_tabs = false
-config.status_update_interval = 300
+config.status_update_interval = 500
 config.window_decorations = 'RESIZE'
 
 -- Selection of dark themes with acceptable contrast
@@ -75,6 +75,17 @@ end
 -- https://stackoverflow.com/questions/2235173/what-is-the-naming-standard-for-path-components
 local function get_rootname(s)
   return s:match('([^/\\]+)%.exe$') or s:match('([^/\\]+)$')
+end
+
+-- normalize windows path by stripping URI scheme
+local function normalize_path(path)
+  local npath = path
+  npath = npath:gsub('^file:///', '')
+  npath = npath:gsub('^file://', '')
+  npath = npath:gsub('%%(%x%x)', function(h) return string.char(tonumber(h,16)) end)
+  npath = npath:gsub('^/([A-Za-z]:)','%1')
+  
+  return npath
 end
 
 local function get_mux_pane(pane)
@@ -657,6 +668,27 @@ local format_left_status = function(window, pane)
   })
 end
 
+local function get_pane_cwd(pane)
+  if not pane or not pane.get_current_working_dir then return end
+
+  local cwd = pane:get_current_working_dir()
+  if not cwd then return end
+
+  return normalize_path(tostring(cwd))
+end
+
+local function get_branch(dir)
+  if not dir then return end
+
+  local f=io.open(dir..'.git/HEAD', 'r')
+  if not f then return nil end
+
+  local s=f:read('*l')
+  f:close()
+  
+  return s and (s:match('ref: refs/heads/(.+)$') or 'detached')
+end
+
 local function get_battery_status()
   local info = wezterm:battery_info()
   if #info == 0 then
@@ -695,21 +727,31 @@ local function get_pane_start_time(process_time)
     -- if wezterm overlay like debug or launcher
     return '------------------------------'
   else
-    return 'Started: ' .. os.date('%b %d %X', process_time)
+    return wezterm.nerdfonts.fa_clock..' '..os.date('%b %d %X', process_time)
   end
 end
 
 local format_right_status = function(window, pane)
+  local cwd = get_pane_cwd(pane)
+  local process_name, _, _, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
   local shell = get_shell(pane)
-  local process_name, _, pid, process_time, _ = get_process_name_fullname_pid_time_argv(pane)
   
-  local ok, cwd = pcall(wezterm.procinfo.current_working_dir_for_pid, pid)
-  if not ok or not cwd or cwd == '' then
-    cwd = ''
+  local branch, branch_status
+  branch = get_branch(cwd)
+  if not branch then
+    branch_status = ''
   else
-    cwd = cwd:gsub('^file://', ''):gsub('^%a+://', '')  -- strip URI schemes if present
+    branch_status = wezterm.nerdfonts.dev_git_branch..branch
   end
 
+  local status
+  status = pane:get_user_vars().clink
+  local clink_color = status and status=='on' and '#BB55DD' or status=='off' and '#55AA88' or '#666666'
+  status = pane:get_user_vars().zsh
+  local zsh_color = status and status=='on' and '#BB55DD' or status=='off' and '#55AA88' or '#666666'
+  status = pane:get_user_vars().nvim
+  local nvim_color = status and status=='on' and '#BB55DD' or status=='off' and '#55AA88' or '#666666'
+  
   local running_time, days
   if not process_time then
     running_time = ''
@@ -718,35 +760,37 @@ local format_right_status = function(window, pane)
     days = math.floor(running_time / 86400)
     running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
   end
-
+  
   local running_color
   if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
     -- show idle status for idle shell, wezterm overlay, alt screen app
-    running_color = '#3388AA'
+    running_color = '#4488DD'
   else
     -- show red running time for some process in progress
     running_color = '#E05500'
   end
   
   local battery_status = get_battery_status()
-
+  
   -- Format top status
   --------------------
   return wezterm.format({
-    { Foreground = { Color = pane:get_user_vars().clink=='on' and 'Orange' or 'Gray' } },
-    { Text = wezterm.nerdfonts.md_alpha_c..'    ' },
-    { Foreground = { Color = pane:get_user_vars().zsh=='on' and 'Orange' or 'Gray' } },
-    { Text = wezterm.nerdfonts.md_alpha_z..'    ' },
-    { Foreground = { Color = pane:get_user_vars().nvim=='on' and 'Orange' or 'Gray' } },
-    { Text = wezterm.nerdfonts.custom_neovim..'    ' },
     { Foreground = { Color = 'Yellow' } },
     { Text = table.concat(key_icons, ' ') },
-    { Foreground = { Color = 'Gray' } },
-    { Text = (#key_icons > 0) and ' < Keys stack    ' or '' },
-    { Foreground = { Color = 'Gray' } },
-    { Text = cwd..'    ' },
+    { Foreground = { Color = '#4488FF' } },
+    { Text = (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '' },
+    { Foreground = { Color = '#999999' } },
+    { Text = (cwd or '')..'  ' },
+    { Foreground = { Color = '#AAAA44' } },
+    { Text = branch_status..'        ' },
     { Foreground = { Color = '#66AAAA' } },
     { Text = window:active_workspace()..' : '..pane:get_domain_name()..'    ' },
+    { Foreground = { Color = clink_color } },
+    { Text = wezterm.nerdfonts.md_alpha_c..' ' },
+    { Foreground = { Color = zsh_color } },
+    { Text = wezterm.nerdfonts.md_alpha_z..' ' },
+    { Foreground = { Color = nvim_color } },
+    { Text = wezterm.nerdfonts.custom_neovim..'    ' },
     { Foreground = { Color = running_color } },
     { Text = running_time..'    ' },
     { Foreground = { Color = battery_status.color } },
