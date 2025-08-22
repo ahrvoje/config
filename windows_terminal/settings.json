@@ -40,7 +40,7 @@
     ],
     "copyFormatting": "none",
     "copyOnSelect": true,
-    "defaultProfile": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
+    "defaultProfile": "{9ce2d784-86c7-4437-98bd-024318ba3628}",
     "keybindings": 
     [
         {
@@ -130,6 +130,12 @@
                 "hidden": false,
                 "name": "PowerShell",
                 "source": "Windows.Terminal.PowershellCore"
+            },
+            {
+                "guid": "{9ce2d784-86c7-4437-98bd-024318ba3628}",
+                "name": "Command Prompt (Clink)",
+                "commandline": "%SystemRoot%\\System32\\cmd.exe /k \"clink.bat inject -q\"",
+                "startingDirectory": "%USERPROFILE%"
             }
         ]
     },
