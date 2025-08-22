@@ -1,0 +1,9 @@
+; setting for cmd.exe AutoRun
+; sets coding page to 65001 which is Window code for Unicode and injects clink
+; to start cmd.exe avoiding this autorun start it with cmd.exe /d
+
+; per user
+reg add "HKCU\Software\Microsoft\Command Processor" /v AutoRun /t REG_EXPAND_SZ /d "chcp 65001 >nul && clink inject -q" /f
+
+; all users (entire machine)
+;reg add "HKLM\Software\Microsoft\Command Processor" /v AutoRun /t REG_EXPAND_SZ /d "chcp 65001 >nul && clink inject -q" /f
