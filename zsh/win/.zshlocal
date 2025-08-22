@@ -7,7 +7,7 @@ path+=(
     /c/Program\ Files/Git/bin/
     /c/Program\ Files/WezTerm/
     /c/Users/H/AppData/Local/Programs/utils/
-    /c/Users/H/AppData/Local/Programs/utils/clink/
+    /c/Users/H/AppData/Local/Programs/clink/
     /c/Users/H/AppData/Local/Programs/nvim/bin/
     /c/Users/H/AppData/Local/Programs/starship/
 )
