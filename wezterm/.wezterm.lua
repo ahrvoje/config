@@ -362,15 +362,10 @@ end
 local action_clear_screen = function(window, pane)
   local shell = get_pane_shell(pane)
   
-  if shell == 'cmd' or shell == 'powershell' or shell == 'pwsh' or shell == 'nu' then
-    -- activates and works for Nushell in Windows
-    window:perform_action(act.SendString ( 'cls\r' ), pane)
-    window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
-  
-  elseif shell == 'bash' or shell == 'gitbash' or shell == 'zsh' or shell == 'wslhost' or shell == 'msys' then
-    -- covers and works for Nushell in WSL
-    window:perform_action(act.SendString('clear \r'), pane)
-    window:perform_action(act.ClearScrollback 'ScrollbackOnly', pane)
+  if shell == 'powershell' or shell == 'pwsh' then
+    window:perform_action(act.SendString( 'clear\r' ), pane)
+  else
+    window:perform_action(act.SendKey{ key='l', mods='CTRL' }, pane)
   end
 end
 
@@ -378,7 +373,7 @@ end
 -- 'LEADER + k' - Kill Process action
 local action_kill_process = function(window, pane)
   local process_name, _, _, pid, _, _ = get_process_name_fullname_cwd_pid_time_argv( pane )
-  if process_name == 'wezterm' then
+  if not process_name then
     return
   end
 
@@ -568,7 +563,7 @@ config.keys = {
   { key = 'PageUp',     mods = 'NONE',       action = wezterm.action_callback( action_pageup ) },
   { key = 'PageDown',   mods = 'NONE',       action = wezterm.action_callback( action_pagedown ) },
   { key = 'Escape',     mods = 'NONE',       action = wezterm.action_callback( action_Esc ) },
-  { key = 'Enter',      mods = 'CTRL|ALT',   action = wezterm.action_callback( action_clear_screen ) },
+  { key = 'l',          mods = 'CTRL',       action = wezterm.action_callback( action_clear_screen ) },
   
   { key = 't',          mods = 'CTRL|ALT',   action = act.SpawnTab 'DefaultDomain' },
   { key = 'y',          mods = 'CTRL|ALT',   action = act.SpawnTab 'CurrentPaneDomain' },
@@ -693,18 +688,6 @@ local format_left_status = function(window, pane)
   })
 end
 
-local function get_branch(dir)
-  if not dir then return end
-
-  local f=io.open(dir..'.git/HEAD', 'r')
-  if not f then return nil end
-
-  local s=f:read('*l')
-  f:close()
-  
-  return s and (s:match('ref: refs/heads/(.+)$') or 'detached')
-end
-
 local function get_battery_status()
   local info = wezterm:battery_info()
   if #info == 0 then
@@ -756,14 +739,6 @@ local format_right_status = function(window, pane)
   local process_name, fullname, cwd, _, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
   local shell = process_name and fullname and argv and get_shell(process_name, fullname, argv) or nil
   
-  local branch, branch_status
-  branch = get_branch(cwd)
-  if not branch then
-    branch_status = ''
-  else
-    branch_status = wezterm.nerdfonts.dev_git_branch..branch
-  end
-
   local status
   status = pane:get_user_vars().clink
   local clink_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
@@ -778,7 +753,7 @@ local format_right_status = function(window, pane)
     days = math.floor(running_time / 86400)
     running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
 
-    if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
+    if shell or not process_name or pane:is_alt_screen_active() then
       -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
       running_color = '#2D7AA1'
     else
@@ -798,8 +773,6 @@ local format_right_status = function(window, pane)
     { Text = (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '' },
     { Foreground = { Color = '#BBBBBB' } },
     { Text = (cwd or '')..'  ' },
-    { Foreground = { Color = '#5FB3B3' } },
-    { Text = branch_status..'        ' },
     { Foreground = { Color = '#847EAE' } },
     { Text = window:active_workspace()..' : '..pane:get_domain_name()..'    ' },
     { Foreground = { Color = clink_color } },
@@ -845,7 +818,7 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   local pane = tab.active_pane
   
   local process_name, fullname, _, _, _, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
-  if not process_name or process_name == 'wezterm' then
+  if not process_name then
     -- leave formatting to wezterm
     return nil
   end
