@@ -3,10 +3,19 @@ c:\Users\<User>\AppData\Local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\L
 additions are
 
 
-key binds for Ctrl-D
+Ctrl-D key binds for action which send command to exit shell 'exit\r'
+    "actions": ...
+        {
+            "command": 
+            {
+                "action": "sendInput",
+                "input": "exit\r"
+            },
+            "id": "User.sendInput.5BF89876",
+            "name": "Exit shell"
+        },
 
-    "keybindings": 
-    [
+    "keybindings": ...
         {
             "id": "User.sendInput.5BF89876",
             "keys": "ctrl+d"
@@ -14,7 +23,6 @@ key binds for Ctrl-D
 
 
 always close shell on exit
-
     "profiles": 
     {
         "defaults": {
@@ -23,9 +31,10 @@ always close shell on exit
 
 
 inject clink on WinTerm start
-
     "defaultProfile": "{9ce2d784-86c7-4437-98bd-024318ba3628}",
 
+    "profiles": ...
+        "list": ...
             {
                 "guid": "{9ce2d784-86c7-4437-98bd-024318ba3628}",
                 "name": "Command Prompt (Clink)",
