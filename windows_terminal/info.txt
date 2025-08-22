@@ -1,0 +1,10 @@
+c:\Users\<User>\AppData\Local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json
+
+addition is key binds for Ctrl-D
+
+    "keybindings": 
+    [
+        {
+            "id": "User.sendInput.5BF89876",
+            "keys": "ctrl+d"
+        },
