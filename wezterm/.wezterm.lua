@@ -739,6 +739,10 @@ local format_right_status = function(window, pane)
   local process_name, fullname, cwd, _, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
   local shell = process_name and fullname and argv and get_shell(process_name, fullname, argv) or nil
   
+  if not cwd or shell == 'wslhost' or shell == 'msys' then
+    cwd = ''
+  end
+  
   local status
   status = pane:get_user_vars().clink
   local clink_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
@@ -755,7 +759,7 @@ local format_right_status = function(window, pane)
 
     if shell or not process_name or pane:is_alt_screen_active() then
       -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
-      running_color = '#2D7AA1'
+      running_color = '#3D8AB1'
     else
       -- show red running time for some process in progress
       running_color = '#AB696F'
@@ -772,7 +776,7 @@ local format_right_status = function(window, pane)
     { Foreground = { Color = '#4488FF' } },
     { Text = (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '' },
     { Foreground = { Color = '#BBBBBB' } },
-    { Text = (cwd or '')..'  ' },
+    { Text = (cwd or '')..'      ' },
     { Foreground = { Color = '#847EAE' } },
     { Text = window:active_workspace()..' : '..pane:get_domain_name()..'    ' },
     { Foreground = { Color = clink_color } },
