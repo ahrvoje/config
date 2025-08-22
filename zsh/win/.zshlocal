@@ -7,5 +7,6 @@ path+=(
     /c/Program\ Files/Git/bin/
     /c/Program\ Files/WezTerm/
     /c/Users/H/AppData/Local/Programs/utils/nvim/bin/
+    /c/Users/H/AppData/Local/Programs/starship/
 )
 export PATH
