@@ -110,61 +110,6 @@ alias gd='git diff'
 alias gs='git status'
 alias grep='grep -i --color=auto'
 
-# Enable parameter/command expansion in prompts
-setopt PROMPT_SUBST
-
-# Git branch info
-if [[ $(locale charmap) == "UTF-8" ]]; then
-  GIT_BRANCH_ICON=$'\ue0a0'
-else
-  GIT_BRANCH_ICON='⎇'
-fi
-
-precmd() {
-  git_branch=""
-  git_untracked=""
-  git_unstaged=""
-  git_staged=""
-
-  # check if in git repo folder
-  git rev-parse --is-inside-work-tree &>/dev/null || return
-
-  local out
-  out=$(LC_ALL=C git -c color.status=false status -b --porcelain=1 2>/dev/null) || return
-
-  local -a lines
-  lines=("${(@f)out}")
-
-  # Branch name from header
-  local hdr="${lines[1]}"
-  if [[ "$hdr" == "## "* ]]; then
-    local b="${hdr#\#\# }"
-    b="${b%%...*}"
-    b="${b%% *}"
-    git_branch=" %F{20}${GIT_BRANCH_ICON}${b}%f"
-  fi
-
-  local u_cnt=0 m_cnt=0 s_cnt=0
-  local line x y
-  # Count changes
-  for line in "${lines[@]:1}"; do
-    x=${line[1,1]} y=${line[2,2]}
-    [[ $x$y == '??' ]] && ((u_cnt++)) && continue
-    [[ $x != ' ' && $x != '?' ]] && ((s_cnt++))
-    [[ $y == M ]] && ((m_cnt++))
-  done
-
-  # use arithmetic ternary *inside* braces for colors)
-  git_untracked=" %F{$(( u_cnt ? 16 : 10 ))}u${u_cnt}%f "
-  git_unstaged="%F{$(( m_cnt ? 197 : 10 ))}m${m_cnt}%f "
-  git_staged="%F{$(( s_cnt ? 197 : 10 ))}s${s_cnt}%f"
-}
-
-PROMPT='%F{cyan}%~%f${git_branch}${git_untracked}${git_unstaged}${git_staged} > '
-
-# Right prompt: time
-RPROMPT='%*'
-
 # fzf
 # invoke config if exists
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
@@ -260,3 +205,5 @@ zle -N fzf_history_search
 # Bind to Alt-r
 bindkey -M emacs '^[r' fzf_history_search
 bindkey -M viins '^[r' fzf_history_search
+
+eval "$(starship init zsh)"
