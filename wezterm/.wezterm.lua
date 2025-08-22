@@ -766,11 +766,11 @@ local format_right_status = function(window, pane)
 
   local status
   status = pane:get_user_vars().clink
-  local clink_color = status and status=='on' and '#BB55DD' or status=='off' and '#55AA88' or '#666666'
+  local clink_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
   status = pane:get_user_vars().zsh
-  local zsh_color = status and status=='on' and '#BB55DD' or status=='off' and '#55AA88' or '#666666'
+  local zsh_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
   status = pane:get_user_vars().nvim
-  local nvim_color = status and status=='on' and '#BB55DD' or status=='off' and '#55AA88' or '#666666'
+  local nvim_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
   
   local running_time, days, running_color = '', 0, ''
   if process_time then
@@ -779,11 +779,11 @@ local format_right_status = function(window, pane)
     running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
 
     if shell or not process_name or process_name == 'wezterm' or pane:is_alt_screen_active() then
-      -- show idle status for idle shell, wezterm overlay, alt screen app
-      running_color = '#4488DD'
+      -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
+      running_color = '#2D7AA1'
     else
       -- show red running time for some process in progress
-      running_color = '#E05500'
+      running_color = '#AB696F'
     end
   end
   
@@ -796,11 +796,11 @@ local format_right_status = function(window, pane)
     { Text = table.concat(key_icons, ' ') },
     { Foreground = { Color = '#4488FF' } },
     { Text = (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '' },
-    { Foreground = { Color = '#999999' } },
+    { Foreground = { Color = '#BBBBBB' } },
     { Text = (cwd or '')..'  ' },
-    { Foreground = { Color = '#AAAA44' } },
+    { Foreground = { Color = '#5FB3B3' } },
     { Text = branch_status..'        ' },
-    { Foreground = { Color = '#66AAAA' } },
+    { Foreground = { Color = '#847EAE' } },
     { Text = window:active_workspace()..' : '..pane:get_domain_name()..'    ' },
     { Foreground = { Color = clink_color } },
     { Text = wezterm.nerdfonts.md_alpha_c..' ' },
