@@ -72,7 +72,9 @@
     ],
     "profiles": 
     {
-        "defaults": {},
+        "defaults": {
+            "closeOnExit": "always"
+        },
         "list": 
         [
             {
