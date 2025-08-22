@@ -1,5 +1,7 @@
 # Get editor completions based on the config schema
-"$schema" = 'https://starship.rs/config-schema.json'
+"$schema" = "https://starship.rs/config-schema.json"
+
+right_format = "$time $cmd_duration"
 
 [directory]
 disabled = true
@@ -15,17 +17,25 @@ add_newline = false
 
 # Replace the '❯' symbol in the prompt with '➜'
 [character] # The name of the module we are configuring is 'character'
-success_symbol = '[➜](bold green)' # The 'success_symbol' segment is being set to '➜' with the color 'bold green'
+success_symbol = "[➜](bold green)" # The 'success_symbol' segment is being set to '➜' with the color 'bold green'
 
 # Disable the package module, hiding it from the prompt completely
 [package]
 disabled = true
 
-# Compact, count-based repo dirtiness + ahead/behind
+[time]
+disabled = false
+time_format = "%H:%M:%S"         # strftime; change as you like
+style = "dimmed"
+
+[cmd_duration]
+min_time = 0                     # 0 = always show (default is 2000 ms)
+show_milliseconds = true
+style = "dimmed"
+
 [git_status]
-# Order + styling of the status block
-format = '([ $all_status$ahead_behind ]($style) )'
-style = 'bold yellow'
+style = "bold yellow"
+format = "([ $all_status$ahead_behind ]($style) )"
 
 # Per-status tokens with counts
 conflicted = "=${count}"
@@ -127,7 +137,7 @@ disabled = true
 disabled = true
 
 [rlang]
-disabled = true     # R
+disabled = true
 
 [ruby]
 disabled = true
