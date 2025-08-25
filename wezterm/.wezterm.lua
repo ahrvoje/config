@@ -5,13 +5,15 @@ local config = wezterm.config_builder()
 
 --------------DEFAULT CONFIGURATION--------------
 local default_config = {
-  -- leader       = nil,
+  leader       =  { key = 'q', mods = 'ALT', timeout_milliseconds = 9999 },
+  initial_rows = 32,
+  initial_cols = 120,
   -- font         = nil,
   -- font_size    = nil,
   -- window_frame = nil,
   -- launch_menu  = nil,
   -- default_prog = nil,
-  window_pos   = { x = 200, y = 32 },  -- initial window position
+  window_pos   = { x = 175, y = 30 },  -- initial window position
 }
 -------------------------------------------------
 
@@ -24,6 +26,8 @@ end
 local local_config = prequire 'wezterm_local'
 
 config.leader       = local_config.leader       or default_config.leader
+config.initial_cols = local_config.initial_cols or default_config.initial_cols
+config.initial_rows = local_config.initial_rows or default_config.initial_rows
 config.font         = local_config.font         or default_config.font
 config.font_size    = local_config.font_size    or default_config.font_size
 config.window_frame = local_config.window_frame or default_config.window_frame
@@ -40,8 +44,6 @@ config.canonicalize_pasted_newlines = 'CarriageReturnAndLineFeed'
 config.check_for_updates = false
 config.disable_default_key_bindings = true
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
-config.initial_cols = 124
-config.initial_rows = 36
 config.scrollback_lines = 200000
 config.show_close_tab_button_in_tabs = false
 config.status_update_interval = 500
