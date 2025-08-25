@@ -271,6 +271,7 @@ local function get_pane_misc(window, pane)
     context = 'Pane misc',
     data = {
       { field = 'alt screen', value = tostring(pane:is_alt_screen_active()) },
+      { field = 'cwd',        value = tostring(pane:get_current_working_dir()) },
     }
   }
 end
