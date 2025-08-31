@@ -155,9 +155,13 @@
                 "source": "Windows.Terminal.PowershellCore"
             },
             {
+                "commandline": "%SystemRoot%\\System32\\cmd.exe /k \"clink.bat inject -q\" && c:\\Users\\H\\cmdrc.cmd",
+                "font": 
+                {
+                    "face": "JetBrainsMono Nerd Font Mono"
+                },
                 "guid": "{9ce2d784-86c7-4437-98bd-024318ba3628}",
                 "name": "Command Prompt (Clink)",
-                "commandline": "%SystemRoot%\\System32\\cmd.exe /k \"clink.bat inject -q\"",
                 "startingDirectory": "%USERPROFILE%"
             }
         ]

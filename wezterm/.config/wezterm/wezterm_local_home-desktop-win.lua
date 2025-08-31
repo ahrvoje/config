@@ -1,7 +1,7 @@
 local wezterm = require 'wezterm'
 
 return {
-  leader = { key = '`', mods = 'ALT', timeout_milliseconds = 9999 },
+  leader = { key = 'q', mods = 'ALT', timeout_milliseconds = 9999 },
 
   font = wezterm.font 'Consolas',
   font_size = 12,
@@ -24,7 +24,7 @@ return {
     },
     {
       label = 'Git Bash',
-      args = { 'c:/Program Files/Git/bin/bash.exe', '-i', '-l' },
+      args = { 'C:/Program Files/Git/bin/bash.exe', '-i', '-l' },
     },
     {
       label = 'PowerShell 7',
@@ -47,11 +47,10 @@ return {
   
   default_prog = {
     'cmd.exe', '/s', '/k',
-      -- set Unicode coding page 65001
-      'chcp', '65001', '>', 'nul', '&&',
-      
       -- and inject clink into the command prompt
-      'clink', 'inject', '-q'
+      'clink', 'inject', '-q', '&&',
+      -- set cmd aliases
+      'C:\\Users\\H\\cmdrc.cmd'
   },
   
   window_pos = { x = 450, y = 200 },
