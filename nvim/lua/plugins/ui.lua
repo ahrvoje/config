@@ -135,6 +135,14 @@ return {
           },
           opts = { skip = true },
         },
+        {
+          filter = { event = "msg_show", any = {
+            { find = "Visual%-Multi" },
+            { find = "VM " },          -- common prefix in VM messages
+            { find = "V%-M" },         -- its mode tag
+          }},
+          opts = { skip = true },
+        },
       },
     },
   },
