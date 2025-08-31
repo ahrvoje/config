@@ -44,7 +44,7 @@ return {
       args = { 'nu.bat' },
     }
   },
-
+  
   default_prog = {
     'cmd.exe', '/s', '/k',
       -- set Unicode coding page 65001

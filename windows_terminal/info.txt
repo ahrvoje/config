@@ -2,6 +2,14 @@ c:\Users\<User>\AppData\Local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\L
 
 additions are
 
+    "centerOnLaunch": false,
+    "copyFormatting": "none",
+    "copyOnSelect": true,
+    "defaultProfile": "{9ce2d784-86c7-4437-98bd-024318ba3628}",
+    "initialCols": 120,
+    "initialPosition": "340,200",
+    "initialRows": 36,
+
 
 Ctrl-D key binds for action which send command to exit shell 'exit\r'
     "actions": ...

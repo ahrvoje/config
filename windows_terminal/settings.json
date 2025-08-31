@@ -36,11 +36,23 @@
         {
             "command": "find",
             "id": "User.find"
+        },
+        {
+            "command": 
+            {
+                "action": "clearBuffer",
+                "clear": "all"
+            },
+            "id": "User.clearBuffer.87C324ED"
         }
     ],
+    "centerOnLaunch": false,
     "copyFormatting": "none",
     "copyOnSelect": true,
     "defaultProfile": "{9ce2d784-86c7-4437-98bd-024318ba3628}",
+    "initialCols": 120,
+    "initialPosition": "340,200",
+    "initialRows": 36,
     "keybindings": 
     [
         {
@@ -62,8 +74,13 @@
         {
             "id": "User.splitPane.A6751878",
             "keys": "alt+shift+d"
+        },
+        {
+            "id": "User.clearBuffer.87C324ED",
+            "keys": "ctrl+l"
         }
     ],
+    "launchMode": "default",
     "newTabMenu": 
     [
         {
@@ -72,8 +89,10 @@
     ],
     "profiles": 
     {
-        "defaults": {
-            "closeOnExit": "always"
+        "defaults": 
+        {
+            "closeOnExit": "always",
+            "colorScheme": "Dark+"
         },
         "list": 
         [
@@ -85,6 +104,10 @@
             },
             {
                 "commandline": "%SystemRoot%\\System32\\cmd.exe",
+                "font": 
+                {
+                    "face": "JetBrainsMono Nerd Font Mono"
+                },
                 "guid": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
                 "hidden": false,
                 "name": "Command Prompt"
