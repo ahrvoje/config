@@ -8,9 +8,9 @@ return {
   window_frame = { font_size = 12 },
 
   keys = {
-    { key = 'j', mods = 'LEADER', action = wezterm.action.SendString 'c:/Julia-1.10.4/bin/julia.exe' },
-    { key = 'p', mods = 'LEADER', action = wezterm.action.SendString 'c:/Python313_64/python.exe' },
-    { key = 't', mods = 'LEADER', action = wezterm.action.SendString 'c:/Python313_64/Scripts/ptpython.exe' },
+    { key = 'j', mods = 'LEADER', action = wezterm.action.SendString 'C:/Julia-1.10.4/bin/julia.exe' },
+    { key = 'p', mods = 'LEADER', action = wezterm.action.SendString 'C:/Python313_64/python.exe' },
+    { key = 't', mods = 'LEADER', action = wezterm.action.SendString 'C:/Python313_64/Scripts/ptpython.exe' },
   },
   
   launch_menu = {
@@ -41,7 +41,7 @@ return {
     },
     {
       label = 'Nu',
-      args = { 'nu.bat' },
+      args = { 'C:/Users/H/AppData/Local/Programs/nu/nu.exe' },
     }
   },
   
@@ -50,7 +50,7 @@ return {
       -- and inject clink into the command prompt
       'clink', 'inject', '-q', '&&',
       -- set cmd aliases
-      'C:\\Users\\H\\cmdrc.cmd'
+      'C:/Users/H/cmdrc.cmd'
   },
   
   window_pos = { x = 450, y = 200 },
