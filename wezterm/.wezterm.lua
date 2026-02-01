@@ -5,7 +5,7 @@ local config = wezterm.config_builder()
 
 --------------DEFAULT CONFIGURATION--------------
 local default_config = {
-  leader       =  { key = 'q', mods = 'ALT', timeout_milliseconds = 9999 },
+  leader       = { key = 'q', mods = 'ALT', timeout_milliseconds = 9999 },
   initial_rows = 32,
   initial_cols = 120,
   -- font         = nil,
@@ -26,8 +26,8 @@ end
 local local_config = prequire 'wezterm_local'
 
 config.leader       = local_config.leader       or default_config.leader
-config.initial_cols = local_config.initial_cols or default_config.initial_cols
 config.initial_rows = local_config.initial_rows or default_config.initial_rows
+config.initial_cols = local_config.initial_cols or default_config.initial_cols
 config.font         = local_config.font         or default_config.font
 config.font_size    = local_config.font_size    or default_config.font_size
 config.window_frame = local_config.window_frame or default_config.window_frame
@@ -381,13 +381,17 @@ local action_kill_process = function(window, pane)
   end
 
   if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
-    os.execute(('taskkill /PID %d /T'):format( pid ))  -- no /F first
-    wezterm.sleep_ms(500)
-    os.execute(('taskkill /PID %d /T /F'):format( pid ))
+    local success, stdout, stderr = wezterm.run_child_process({ 'taskkill', '/PID', pid, '/T' })  -- no /F first
+    if not success then
+      wezterm.sleep_ms(500)
+      local success, stdout, stderr = wezterm.run_child_process({ 'taskkill', '/PID', pid, '/T', '/F' })
+    end
   else
-    os.execute(('kill %d'):format( pid ))
-    wezterm.sleep_ms(500)
-    os.execute(('kill -9 %d'):format( pid ))
+    local success, stdout, stderr = wezterm.run_child_process({ 'kill', pid })
+    if not success then
+      wezterm.sleep_ms(500)
+      local success, stdout, stderr = wezterm.run_child_process({ 'kill', '-9', pid })
+    end
   end
 end
 

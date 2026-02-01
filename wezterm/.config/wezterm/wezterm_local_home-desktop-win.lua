@@ -1,16 +1,15 @@
 local wezterm = require 'wezterm'
 
 return {
-  leader = { key = 'q', mods = 'ALT', timeout_milliseconds = 9999 },
-
   font = wezterm.font 'Consolas',
   font_size = 12,
   window_frame = { font_size = 12 },
+  window_pos = { x = 450, y = 200 },
 
   keys = {
-    { key = 'j', mods = 'LEADER', action = wezterm.action.SendString 'C:/Julia-1.10.4/bin/julia.exe' },
-    { key = 'p', mods = 'LEADER', action = wezterm.action.SendString 'C:/Python313_64/python.exe' },
-    { key = 't', mods = 'LEADER', action = wezterm.action.SendString 'C:/Python313_64/Scripts/ptpython.exe' },
+    { key = 'j', mods = 'LEADER', action = wezterm.action.SendString 'C:/Julia-1.11.5/bin/julia.exe' },
+    { key = 'p', mods = 'LEADER', action = wezterm.action.SendString 'C:/Users/H/AppData/Local/Programs/Python/Python314/python.exe' },
+    { key = 't', mods = 'LEADER', action = wezterm.action.SendString 'C:/Users/H/AppData/Local/Programs/Python/Python314/Scripts/ptpython.exe' },
   },
   
   launch_menu = {
@@ -52,6 +51,4 @@ return {
       -- set cmd aliases
       'C:/Users/H/cmdrc.cmd'
   },
-  
-  window_pos = { x = 450, y = 200 },
 }
