@@ -37,7 +37,7 @@ config.default_prog = local_config.default_prog or default_config.default_prog
 -------------------------------------------------
 
 config.adjust_window_size_when_changing_font_size = false
-config.animation_fps = 60
+config.animation_fps = 25
 config.max_fps = 60
 config.audible_bell = 'Disabled'
 config.canonicalize_pasted_newlines = 'CarriageReturnAndLineFeed'
@@ -135,10 +135,10 @@ local function to_unix_time(t)
 end
 
 local function get_process_name_fullname_cwd_pid_time_argv(pane)
-  local pane = get_mux_pane(pane)
-  if not pane then return end
+  local mux_pane = get_mux_pane(pane)
+  if not mux_pane then return end
 
-  local ok, info = pcall(pane.get_foreground_process_info, pane)
+  local ok, info = pcall(mux_pane.get_foreground_process_info, mux_pane)
   if not ok or not info then return end
   
   return get_rootname(info.name:lower()), info.executable:lower(), info.cwd, info.pid, to_unix_time(info.start_time), info.argv
@@ -692,7 +692,7 @@ local format_left_status = function(window, pane)
 end
 
 local function get_battery_status()
-  local info = wezterm:battery_info()
+  local info = wezterm.battery_info()
   if #info == 0 then
     return {
       color = '',
@@ -730,7 +730,7 @@ local function get_pane_start_time(pane_id, process_time)
     return '------------------------------'
   end
 
-  key = tostring(pane_id)  -- wezterm.GLOBAL is JSON-based accepting only string keys
+  local key = tostring(pane_id)  -- wezterm.GLOBAL is JSON-based accepting only string keys
   if not wezterm.GLOBAL.pane_start_time_cache[key] then
     wezterm.GLOBAL.pane_start_time_cache[key] = wezterm.nerdfonts.fa_clock..' '..os.date('%b %d %X', process_time)
   end
