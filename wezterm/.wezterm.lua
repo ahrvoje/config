@@ -247,7 +247,9 @@ end
 
 local function get_pane_info(window, pane)
   local id = pane:pane_id()
-  for _, info in ipairs(pane:tab():panes_with_info()) do
+  local tab = pane:tab()
+  if not tab then return nil end  -- pane has no tab (detached)
+  for _, info in ipairs(tab:panes_with_info()) do
     if info.pane:pane_id() == id then
       return { context = 'Pane info', data = info }
     end
@@ -394,12 +396,13 @@ end
 ----------------------------------------------------------------------------------
 -- 'LEADER + x' - Kill active pane
 local action_kill_pane = function(window, pane)
+  local pane_id = pane:pane_id()  -- capture now while pane is alive
   -- Try nicely (without confirm)
   window:perform_action(wezterm.action.CloseCurrentPane { confirm = false }, pane)
 
   -- After 200ms delay try a hard kill
   wezterm.time.call_after(0.2, function()
-    wezterm.background_child_process({ 'wezterm', 'cli', 'kill-pane', '--pane-id', tostring( pane:pane_id() ) })
+    wezterm.background_child_process({ 'wezterm', 'cli', 'kill-pane', '--pane-id', tostring(pane_id) })
   end)
 end
 
@@ -407,6 +410,7 @@ end
 -- 'Ctrl + Alt + ;' - Toggle zoom state of pane running alt screen
 local action_alt_pane_toggle_zoom = function(window, pane)
   local tab = window:active_tab()
+  if not tab then return end
 
   for _, pane_info in ipairs(tab:panes_with_info()) do
     local mux_pane = pane_info.pane
@@ -423,11 +427,13 @@ end
 
 -- 'Esc' - Clear the line
 local line_is_empty = function (pane)
-  local dims = pane:get_dimensions()
+  local ok, dims = pcall(pane.get_dimensions, pane)
+  if not ok or not dims then return true end  -- assume empty if we can't check
 
   -- bottom visible line index
   local start = dims.scrollback_rows + dims.viewport_rows - 1
-  local text = pane:get_lines_as_text(start, 1) or ''
+  local ok2, text = pcall(pane.get_lines_as_text, pane, start, 1)
+  text = (ok2 and text) or ''
   text = text:gsub('%s+$', '')  -- trim trailing spaces
 
   -- very conservative: empty or just a prompt-ish ending
@@ -501,8 +507,10 @@ end
 -- Send selected text to pane running alt screen
 local action_send_to_alt_pane = function(window, pane)
   local text = window:get_selection_text_for_pane(pane)
+  local tab = window:active_tab()
+  if not tab then return end
 
-  for _, pane_info in ipairs(window:active_tab():panes_with_info()) do
+  for _, pane_info in ipairs(tab:panes_with_info()) do
     local p = pane_info.pane
     if p:is_alt_screen_active() then
       wezterm.log_info(text)
@@ -739,6 +747,15 @@ local function get_pane_start_time(pane_id, process_time)
 end
 
 local format_right_status = function(window, pane)
+  -- Check if pane is still valid in mux before accessing its methods
+  local ok, user_vars = pcall(pane.get_user_vars, pane)
+  if not ok then return '' end  -- pane no longer exists
+  
+  -- Cache pane values while pane is known valid
+  local pane_id = pane:pane_id()
+  local ok2, domain_name = pcall(pane.get_domain_name, pane)
+  domain_name = ok2 and domain_name or ''
+  
   local process_name, fullname, cwd, _, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
   local shell = process_name and fullname and argv and get_shell(process_name, fullname, argv) or nil
   
@@ -747,11 +764,11 @@ local format_right_status = function(window, pane)
   end
   
   local status
-  status = pane:get_user_vars().clink
+  status = user_vars.clink
   local clink_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
-  status = pane:get_user_vars().zsh
+  status = user_vars.zsh
   local zsh_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
-  status = pane:get_user_vars().nvim
+  status = user_vars.nvim
   local nvim_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
   
   local running_time, days, running_color = '', 0, ''
@@ -760,7 +777,8 @@ local format_right_status = function(window, pane)
     days = math.floor(running_time / 86400)
     running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
 
-    if shell or not process_name or pane:is_alt_screen_active() then
+    local ok2, is_alt = pcall(pane.is_alt_screen_active, pane)
+    if shell or not process_name or (ok2 and is_alt) then
       -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
       running_color = '#3D8AB1'
     else
@@ -781,7 +799,7 @@ local format_right_status = function(window, pane)
     { Foreground = { Color = '#BBBBBB' } },
     { Text = (cwd or '')..'      ' },
     { Foreground = { Color = '#847EAE' } },
-    { Text = window:active_workspace()..' : '..pane:get_domain_name()..'    ' },
+    { Text = window:active_workspace()..' : '..domain_name..'    ' },
     { Foreground = { Color = clink_color } },
     { Text = wezterm.nerdfonts.md_alpha_c..' ' },
     { Foreground = { Color = zsh_color } },
@@ -793,7 +811,7 @@ local format_right_status = function(window, pane)
     { Foreground = { Color = battery_status.color } },
     { Text = battery_status.icon .. battery_status.text .. '' },
     { Foreground = { Color = 'Gray' } },
-    { Text = get_pane_start_time(pane:pane_id(), process_time) .. '      ' },
+    { Text = get_pane_start_time(pane_id, process_time) .. '      ' },
   })
 end
 
@@ -831,7 +849,7 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   end
   
   local title_prefix
-  if pane.title:match('Copy mode:') then
+  if pane.title and pane.title:match('Copy mode:') then
     title_prefix = 'Copy mode: '
   else
     title_prefix = ''
