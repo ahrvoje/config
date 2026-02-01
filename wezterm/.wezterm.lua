@@ -381,17 +381,13 @@ local action_kill_process = function(window, pane)
   end
 
   if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
-    local success, stdout, stderr = wezterm.run_child_process({ 'taskkill', '/PID', pid, '/T' })  -- no /F first
+    wezterm.background_child_process({ 'taskkill', '/PID', pid, '/T' })  -- no /F first
     wezterm.sleep_ms(500)
-    if not success then
-      local success, stdout, stderr = wezterm.run_child_process({ 'taskkill', '/PID', pid, '/T', '/F' })
-    end
+    wezterm.background_child_process({ 'taskkill', '/PID', pid, '/T', '/F' })
   else
-    local success, stdout, stderr = wezterm.run_child_process({ 'kill', pid })
+    wezterm.background_child_process({ 'kill', pid })
     wezterm.sleep_ms(500)
-    if not success then
-      local success, stdout, stderr = wezterm.run_child_process({ 'kill', '-9', pid })
-    end
+    wezterm.background_child_process({ 'kill', '-9', pid })
   end
 end
 
@@ -403,7 +399,7 @@ local action_kill_pane = function(window, pane)
 
   -- After 200ms delay try a hard kill
   wezterm.time.call_after(0.2, function()
-    wezterm.run_child_process({ 'wezterm', 'cli', 'kill-pane', '--pane-id', tostring( pane:pane_id() ) })
+    wezterm.background_child_process({ 'wezterm', 'cli', 'kill-pane', '--pane-id', tostring( pane:pane_id() ) })
   end)
 end
 
