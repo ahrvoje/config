@@ -634,7 +634,7 @@ config.key_tables = {
     { key = '=',         mods = 'CTRL', action = act.IncreaseFontSize },
     { key = '-',         mods = 'CTRL', action = act.DecreaseFontSize },
     { key = '0',         mods = 'CTRL', action = act.ResetFontSize },
-                                       
+    
     { key = 'v',         mods = 'CTRL', action = act.PasteFrom 'Clipboard' },
     { key = 'x',         mods = 'CTRL', action = act.ActivateCopyMode },
     { key = 's',         mods = 'CTRL', action = act.Search 'CurrentSelectionOrEmptyString' },
