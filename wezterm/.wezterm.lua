@@ -19,8 +19,22 @@ local default_config = {
 
 ---------------LOCAL CONFIGURATION---------------
 local function prequire(m) 
-  local ok, response = pcall(require, m) 
-  return ok and response or {}
+  local ok, response = pcall(require, m)
+  if not ok then
+    local err = tostring(response)
+    -- Treat missing optional local module as normal; warn on all other load failures.
+    if not string.find(err, "module '" .. m .. "' not found", 1, true) then
+      wezterm.log_warn('Failed to load "' .. m .. '": ' .. err)
+    end
+    return {}
+  end
+
+  if type(response) ~= 'table' then
+    wezterm.log_warn('Module "' .. m .. '" must return a table; using defaults')
+    return {}
+  end
+
+  return response
 end
 
 local local_config = prequire 'wezterm_local'
@@ -139,9 +153,20 @@ local function get_process_name_fullname_cwd_pid_time_argv(pane)
   if not mux_pane then return end
 
   local ok, info = pcall(mux_pane.get_foreground_process_info, mux_pane)
-  if not ok or not info then return end
-  
-  return get_rootname(info.name:lower()), info.executable:lower(), info.cwd, info.pid, to_unix_time(info.start_time), info.argv
+  if not ok or type(info) ~= 'table' then return end
+
+  local name = info.name
+  local executable = info.executable
+  if type(name) ~= 'string' or name == '' then return end
+  if type(executable) ~= 'string' or executable == '' then return end
+
+  local process_time = nil
+  if type(info.start_time) == 'number' then
+    process_time = to_unix_time(info.start_time)
+  end
+
+  local argv = type(info.argv) == 'table' and info.argv or nil
+  return get_rootname(name:lower()), executable:lower(), info.cwd, info.pid, process_time, argv
 end
 
 ----------------------------------------------------------------------------------
@@ -844,31 +869,40 @@ local icons_names = {
   zsh        = { wezterm.nerdfonts.md_percent,       'zsh' },
 }
 wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
-  local pane = tab.active_pane
-  
-  local process_name, fullname, _, _, _, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
-  if not process_name then
-    -- leave formatting to wezterm
+  local ok, result = pcall(function()
+    local pane = tab.active_pane
+
+    local process_name, fullname, _, _, _, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
+    if not process_name then
+      -- leave formatting to wezterm
+      return nil
+    end
+
+    local title_prefix
+    if pane.title and pane.title:match('Copy mode:') then
+      title_prefix = 'Copy mode: '
+    else
+      title_prefix = ''
+    end
+
+    local name = get_shell(process_name, fullname, argv)
+    if not name or name == '' then
+      name = process_name
+    end
+
+    local icon_name = icons_names[name] or { '>', name }
+
+    return wezterm.format({
+      { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. pane.pane_id },
+    })
+  end)
+
+  if not ok then
+    wezterm.log_warn('format-tab-title failed: ' .. tostring(result))
     return nil
   end
-  
-  local title_prefix
-  if pane.title and pane.title:match('Copy mode:') then
-    title_prefix = 'Copy mode: '
-  else
-    title_prefix = ''
-  end
-  
-  local name = get_shell(process_name, fullname, argv)
-  if not name or name == '' then
-    name = process_name
-  end
-  
-  local icon_name = icons_names[name] or { '>', name }
-  
-  return wezterm.format({
-    { Text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. pane.pane_id },
-  })
+
+  return result
 end)
 
 -- Startup window position is loaded from local configuration
