@@ -383,13 +383,13 @@ local action_kill_process = function(window, pane)
   end
 
   if wezterm.target_triple:match('windows') and os.getenv('WSL_DISTRO_NAME') == nil then
-    wezterm.background_child_process({ 'taskkill', '/PID', pid, '/T' })  -- no /F first
+    wezterm.background_child_process({ 'taskkill', '/PID', tostring(pid), '/T' })  -- no /F first
     wezterm.sleep_ms(500)
-    wezterm.background_child_process({ 'taskkill', '/PID', pid, '/T', '/F' })
+    wezterm.background_child_process({ 'taskkill', '/PID', tostring(pid), '/T', '/F' })
   else
-    wezterm.background_child_process({ 'kill', pid })
+    wezterm.background_child_process({ 'kill', tostring(pid) })
     wezterm.sleep_ms(500)
-    wezterm.background_child_process({ 'kill', '-9', pid })
+    wezterm.background_child_process({ 'kill', '-9', tostring(pid) })
   end
 end
 
@@ -507,6 +507,7 @@ end
 -- Send selected text to pane running alt screen
 local action_send_to_alt_pane = function(window, pane)
   local text = window:get_selection_text_for_pane(pane)
+  if not text or text == '' then return end
   local tab = window:active_tab()
   if not tab then return end
 
@@ -747,72 +748,75 @@ local function get_pane_start_time(pane_id, process_time)
 end
 
 local format_right_status = function(window, pane)
-  -- Check if pane is still valid in mux before accessing its methods
-  local ok, user_vars = pcall(pane.get_user_vars, pane)
-  if not ok then return '' end  -- pane no longer exists
-  
-  -- Cache pane values while pane is known valid
-  local pane_id = pane:pane_id()
-  local ok2, domain_name = pcall(pane.get_domain_name, pane)
-  domain_name = ok2 and domain_name or ''
-  
-  local process_name, fullname, cwd, _, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
-  local shell = process_name and fullname and argv and get_shell(process_name, fullname, argv) or nil
-  
-  if not cwd or shell == 'wslhost' or shell == 'msys' then
-    cwd = ''
-  end
-  
-  local status
-  status = user_vars.clink
-  local clink_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
-  status = user_vars.zsh
-  local zsh_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
-  status = user_vars.nvim
-  local nvim_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
-  
-  local running_time, days, running_color = '', 0, ''
-  if process_time then
-    running_time = os.time() - process_time
-    days = math.floor(running_time / 86400)
-    running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
+  local ok, result = pcall(function()
+    local user_vars = pane:get_user_vars()
+    local pane_id = pane:pane_id()
+    local domain_name = pane:get_domain_name()
 
-    local ok2, is_alt = pcall(pane.is_alt_screen_active, pane)
-    if shell or not process_name or (ok2 and is_alt) then
-      -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
-      running_color = '#3D8AB1'
-    else
-      -- show red running time for some process in progress
-      running_color = '#AB696F'
+    local process_name, fullname, cwd, _, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
+    local shell = process_name and fullname and argv and get_shell(process_name, fullname, argv) or nil
+
+    if not cwd or shell == 'wslhost' or shell == 'msys' then
+      cwd = ''
     end
+
+    local status
+    status = user_vars.clink
+    local clink_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
+    status = user_vars.zsh
+    local zsh_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
+    status = user_vars.nvim
+    local nvim_color = status and status=='on' and '#AF8461' or status=='off' and '#6A946A' or '#666666'
+
+    local running_time, days, running_color = '', 0, ''
+    if process_time then
+      running_time = os.time() - process_time
+      days = math.floor(running_time / 86400)
+      running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
+
+      local is_alt = pane:is_alt_screen_active()
+      if shell or not process_name or is_alt then
+        -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
+        running_color = '#3D8AB1'
+      else
+        -- show red running time for some process in progress
+        running_color = '#AB696F'
+      end
+    end
+
+    local battery_status = get_battery_status()
+
+    -- Format top status
+    --------------------
+    return wezterm.format({
+      { Foreground = { Color = 'Yellow' } },
+      { Text = table.concat(key_icons, ' ') },
+      { Foreground = { Color = '#4488FF' } },
+      { Text = (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '' },
+      { Foreground = { Color = '#BBBBBB' } },
+      { Text = (cwd or '')..'      ' },
+      { Foreground = { Color = '#847EAE' } },
+      { Text = window:active_workspace()..' : '..domain_name..'    ' },
+      { Foreground = { Color = clink_color } },
+      { Text = wezterm.nerdfonts.md_alpha_c..' ' },
+      { Foreground = { Color = zsh_color } },
+      { Text = wezterm.nerdfonts.md_alpha_z..' ' },
+      { Foreground = { Color = nvim_color } },
+      { Text = wezterm.nerdfonts.custom_neovim..'    ' },
+      { Foreground = { Color = running_color } },
+      { Text = running_time..'    ' },
+      { Foreground = { Color = battery_status.color } },
+      { Text = battery_status.icon .. battery_status.text .. '' },
+      { Foreground = { Color = 'Gray' } },
+      { Text = get_pane_start_time(pane_id, process_time) .. '      ' },
+    })
+  end)
+
+  if not ok then
+    wezterm.log_warn('format_right_status failed: ' .. tostring(result))
+    return ''
   end
-  
-  local battery_status = get_battery_status()
-  
-  -- Format top status
-  --------------------
-  return wezterm.format({
-    { Foreground = { Color = 'Yellow' } },
-    { Text = table.concat(key_icons, ' ') },
-    { Foreground = { Color = '#4488FF' } },
-    { Text = (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '' },
-    { Foreground = { Color = '#BBBBBB' } },
-    { Text = (cwd or '')..'      ' },
-    { Foreground = { Color = '#847EAE' } },
-    { Text = window:active_workspace()..' : '..domain_name..'    ' },
-    { Foreground = { Color = clink_color } },
-    { Text = wezterm.nerdfonts.md_alpha_c..' ' },
-    { Foreground = { Color = zsh_color } },
-    { Text = wezterm.nerdfonts.md_alpha_z..' ' },
-    { Foreground = { Color = nvim_color } },
-    { Text = wezterm.nerdfonts.custom_neovim..'    ' },
-    { Foreground = { Color = running_color } },
-    { Text = running_time..'    ' },
-    { Foreground = { Color = battery_status.color } },
-    { Text = battery_status.icon .. battery_status.text .. '' },
-    { Foreground = { Color = 'Gray' } },
-    { Text = get_pane_start_time(pane_id, process_time) .. '      ' },
-  })
+  return result
 end
 
 wezterm.on('update-status', function(window, pane)
