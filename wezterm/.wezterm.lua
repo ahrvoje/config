@@ -148,7 +148,17 @@ local function to_unix_time(t)
   return math.floor(t / 10000000 - 134774 * 86400);
 end
 
+local process_info_cache = {}
+
 local function get_process_name_fullname_cwd_pid_time_argv(pane)
+  local pane_id = type(pane.pane_id) == 'function' and pane:pane_id() or pane.pane_id
+  local now = os.time()
+  
+  local cached = process_info_cache[pane_id]
+  if cached and (now - cached.last_update < 2) then
+    return cached.name, cached.ext, cached.cwd, cached.pid, cached.time, cached.argv
+  end
+
   local mux_pane = get_mux_pane(pane)
   if not mux_pane then return end
 
@@ -166,7 +176,20 @@ local function get_process_name_fullname_cwd_pid_time_argv(pane)
   end
 
   local argv = type(info.argv) == 'table' and info.argv or nil
-  return get_rootname(name:lower()), executable:lower(), info.cwd, info.pid, process_time, argv
+  local p_name = get_rootname(name:lower())
+  local f_name = executable:lower()
+
+  process_info_cache[pane_id] = {
+    name = p_name,
+    ext = f_name,
+    cwd = info.cwd,
+    pid = info.pid,
+    time = process_time,
+    argv = argv,
+    last_update = now
+  }
+
+  return p_name, f_name, info.cwd, info.pid, process_time, argv
 end
 
 ----------------------------------------------------------------------------------
@@ -725,7 +748,15 @@ local format_left_status = function(window, pane)
   })
 end
 
+local battery_cache = { data = nil, last_update = 0 }
+
 local function get_battery_status()
+  local now = os.time()
+  
+  if battery_cache.data and (now - battery_cache.last_update < 60) then
+    return battery_cache.data
+  end
+
   local info = wezterm.battery_info()
   if #info == 0 then
     return {
@@ -751,25 +782,27 @@ local function get_battery_status()
 
   text = math.ceil(100 * charge) .. '%  '
 
-  return {
+  battery_cache.data = {
     color = color,
     icon  = icon,
     text  = text,
   }
+  battery_cache.last_update = now
+
+  return battery_cache.data
 end
 
-wezterm.GLOBAL.pane_start_time_cache = wezterm.GLOBAL.pane_start_time_cache or {}
+local pane_start_time_cache = {}
 local function get_pane_start_time(pane_id, process_time)
   if not pane_id or not process_time then
     return '------------------------------'
   end
 
-  local key = tostring(pane_id)  -- wezterm.GLOBAL is JSON-based accepting only string keys
-  if not wezterm.GLOBAL.pane_start_time_cache[key] then
-    wezterm.GLOBAL.pane_start_time_cache[key] = wezterm.nerdfonts.fa_clock..' '..os.date('%b %d %X', process_time)
+  if not pane_start_time_cache[pane_id] then
+    pane_start_time_cache[pane_id] = wezterm.nerdfonts.fa_clock..' '..os.date('%b %d %X', process_time)
   end
 
-  return wezterm.GLOBAL.pane_start_time_cache[key]
+  return pane_start_time_cache[pane_id]
 end
 
 local format_right_status = function(window, pane)
