@@ -871,9 +871,9 @@ local format_right_status = function(window, pane)
   end)
 
   if not ok then
-    wezterm.log_warn('format_right_status failed: ' .. tostring(result))
     return ''
   end
+
   return result
 end
 
@@ -931,7 +931,6 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   end)
 
   if not ok then
-    wezterm.log_warn('format-tab-title failed: ' .. tostring(result))
     return nil
   end
 
