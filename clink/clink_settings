@@ -1,6 +1,10 @@
 # name: Enable automatic suggestions
 # type: boolean
-autosuggest.enable = False
+autosuggest.enable = True
+
+# name: Set autosuggest strategy to history
+# type: enum
+autosuggest.strategy = history
 
 # name: Argument color
 # type: color
@@ -66,4 +70,3 @@ history.expand_mode = off
 # name: Show preview of history expansion at cursor
 # type: boolean
 history.show_preview = False
-

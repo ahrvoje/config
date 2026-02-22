@@ -519,23 +519,30 @@ local action_Esc = function(window, pane)
     end
   
   elseif not shell then
-  -- if some app running, but not shell, e.g. nvim
-    -- there were problems with sending key 'Escape' or string '0x1B' directly
-    -- Ctrl+[ is old portable terminal trick for sending Esc char 0x1B
-    -- apparently Ctrl shaves off high bit of [ char 0x5B leaving 0x1B
-    window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
-  
+    -- non-shell app is running (e.g. nvim, fzf, less...)
+    if process_name == 'fzf' then
+      -- fzf accepts Ctrl-G for abort; bare Esc can't pass through ConPTY
+      window:perform_action(act.SendKey{ key='g', mods='CTRL' }, pane)
+    else
+      -- Ctrl+[ is portable terminal trick for sending Esc char 0x1B
+      window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
+    end
+
+  elseif shell == 'cmd' then
+    if line_is_empty(pane) then
+      -- Esc via Ctrl+[ (note: Clink popups need physical Ctrl+[ to dismiss)
+      window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
+    else
+      window:perform_action(act.Multiple{
+        act.SendKey{ key='End',  mods='NONE' },
+        act.SendKey{ key='Home', mods='SHIFT' },
+        act.SendKey{ key='Delete', mods='NONE' },
+      }, pane)
+    end
+
   elseif line_is_empty(pane) then
     -- send Esc if line is empty
     window:perform_action(act.SendKey{ key='[', mods='CTRL' }, pane)
-  
-  -- last option is to clear the line
-  elseif shell == 'cmd' then
-    window:perform_action(act.Multiple{
-      act.SendKey{ key='End',  mods='NONE' },
-      act.SendKey{ key='Home', mods='SHIFT' },
-      act.SendKey{ key='Delete', mods='NONE' },
-    }, pane)
   
   elseif shell == 'pwsh' or shell == 'powershell' then
     -- PowerShell 5 & 7, works w/o PS key bind, w & w/o Constrained Language Mode (CLM)
