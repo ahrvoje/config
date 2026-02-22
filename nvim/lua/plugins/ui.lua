@@ -31,7 +31,7 @@ return {
     config = function()
       require('lualine').setup({
         options = {
-          refresh = { statusline = 50, tabline = 50, winbar = 50 },
+          refresh = { statusline = 500, tabline = 500, winbar = 500 },
           icons_enabled = true,
           globalstatus = true,
 

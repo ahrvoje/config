@@ -7,12 +7,10 @@ vim.opt.fixeol = false
 -- set terminal UserVar 'nvim' to 'on'/'off' on enter/exit
 local function set_user_var(name, b64val)
   local osc = string.format('\27]1337;SetUserVar=%s=%s\7', name, b64val)
-  if not os.getenv('TMUX') then
-    io.stdout:write(osc)
-  else
-    io.stdout:write('\27Ptmux;\27' .. osc .. '\27\\')
+  if os.getenv('TMUX') then
+    osc = '\27Ptmux;\27' .. osc .. '\27\\'
   end
-  io.stdout:flush()
+  vim.api.nvim_chan_send(2, osc)
 end
 
 local grp = vim.api.nvim_create_augroup('NvimVar', { clear = true })
@@ -41,15 +39,11 @@ vim.api.nvim_create_autocmd('TextYankPost', {
 })
 
 -- autosave files on focus lost
-local grp = vim.api.nvim_create_augroup("autosave_buffer", { clear = true })
+local autosave_grp = vim.api.nvim_create_augroup("autosave_buffer", { clear = true })
 vim.api.nvim_create_autocmd("FocusLost", {
-  group = grp,
+  group = autosave_grp,
   callback = function()
-    local buf = vim.api.nvim_get_current_buf()
-    local bo = vim.bo[buf]
-    if bo.buftype ~= "" or not bo.modifiable or bo.readonly then return end
-    if vim.api.nvim_buf_get_name(buf) == "" then return end
-    vim.cmd("silent! update")
+    vim.cmd("silent! wall")
   end,
 })
 
@@ -58,7 +52,7 @@ vim.opt.undofile = true
 
 -- ensure Lazy
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not vim.loop.fs_stat(lazypath) then
+if not vim.uv.fs_stat(lazypath) then
   vim.fn.system({
     "git",
     "clone",
@@ -106,12 +100,15 @@ do
     end
   end
 
+  local last_line_count = {}
+
   local function place_marker(bufnr)
     if not vim.api.nvim_buf_is_valid(bufnr) or not vim.api.nvim_buf_is_loaded(bufnr) then
       return
     end
     vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
     local line_count = vim.api.nvim_buf_line_count(bufnr)
+    last_line_count[bufnr] = line_count
     if line_count < 1 then return end
 
     local mark, hl = marker_for(bufnr)
@@ -122,17 +119,26 @@ do
     })
   end
 
-  local events = {
-    "BufReadPost", "BufNewFile", "BufWritePost", "TextChanged",
-    "TextChangedI", "OptionSet", "WinEnter", "BufEnter",
-  }
+  vim.api.nvim_create_autocmd(
+    { "BufReadPost", "BufNewFile", "BufWritePost", "BufEnter", "WinEnter", "OptionSet" },
+    {
+      callback = function(args)
+        if args.event == "OptionSet" and args.match ~= "fileformat" and args.match ~= "endofline" then
+          return
+        end
+        place_marker(args.buf)
+      end,
+    }
+  )
 
-  vim.api.nvim_create_autocmd(events, {
+  -- lightweight: only re-place when line count actually changed
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
     callback = function(args)
-      if args.event == "OptionSet" and args.match ~= "fileformat" and args.match ~= "endofline" then
-        return
+      local bufnr = args.buf
+      local cur = vim.api.nvim_buf_line_count(bufnr)
+      if cur ~= last_line_count[bufnr] then
+        place_marker(bufnr)
       end
-      place_marker(args.buf)
     end,
   })
 end
