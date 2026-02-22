@@ -13,8 +13,8 @@ vim.keymap.set("n", "<C-M-j>", "<cmd>rightbelow split<CR>",  { desc = "Split pan
 vim.keymap.set("n", "<C-M-k>", "<cmd>leftabove split<CR>",   { desc = "Split pane up" })
 vim.keymap.set("n", "<C-M-l>", "<cmd>rightbelow vsplit<CR>", { desc = "Split pane right" })
 
-vim.keymap.set("n", "<Tab>",   "<cmd>tabn<CR>", { desc = "Next tab" })
-vim.keymap.set("n", "<S-Tab>", "<cmd>tabp<CR>", { desc = "Previous tab" })
+vim.keymap.set("n", "<Tab>",   "<cmd>BufferLineCycleNext<CR>", { desc = "Next buffer" })
+vim.keymap.set("n", "<S-Tab>", "<cmd>BufferLineCyclePrev<CR>", { desc = "Previous buffer" })
 
 vim.keymap.set("n", "<leader>w", "<cmd>setlocal wrap!<CR>", { desc = "Toggle wrap / nowrap" })
 vim.keymap.set("n", "<leader>e", "<cmd>setlocal noendofline!<CR>", { desc = "Toggle EOF" })

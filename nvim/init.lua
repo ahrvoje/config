@@ -151,6 +151,7 @@ vim.pack.add({
   gh('folke/noice.nvim'),
   gh('MunifTanjim/nui.nvim'),
   gh('rcarriga/nvim-notify'),
+  gh('akinsho/bufferline.nvim'),
 
   -- Editing: treesitter, git, indentation, session, resize
   gh('nvim-treesitter/nvim-treesitter'),
@@ -173,6 +174,7 @@ vim.pack.add({
   { src = gh('windwp/nvim-autopairs'), load = false },
   { src = gh('lifer0se/ezbookmarks.nvim'), load = false },
   { src = gh('mg979/vim-visual-multi'), load = false },
+  { src = gh('folke/flash.nvim'), load = false },
 })
 
 -- Build hooks
@@ -251,6 +253,7 @@ vim.schedule(function()
   vim.cmd.packadd("lualine.nvim")
   vim.cmd.packadd("nui.nvim")
   vim.cmd.packadd("nvim-notify")
+  vim.cmd.packadd("bufferline.nvim")
   vim.cmd.packadd("noice.nvim")
   vim.cmd.packadd("nvim-treesitter")
   vim.cmd.packadd("gitsigns.nvim")
@@ -274,6 +277,16 @@ vim.schedule(function()
     require("catppuccin").setup({ flavour = "mocha" })
     vim.cmd.colorscheme "catppuccin"
   end
+
+  -- Bufferline
+  require('bufferline').setup({
+    options = {
+      diagnostics = false,
+      show_buffer_close_icons = false,
+      show_close_icon = false,
+      separator_style = "slant",
+    },
+  })
 
   -- Lualine
   require('lualine').setup({
@@ -497,7 +510,6 @@ vim.schedule(function()
   }, function()
     vim.keymap.set("n", "<leader>g", "<cmd>GrugFar<CR>", { desc = "Grug" })
   end)
-  defer_cmd("grug-far.nvim", { "GrugFar" })
 
   -- Undotree (keys + cmd)
   defer_keys("undotree", {
@@ -505,7 +517,6 @@ vim.schedule(function()
   }, function()
     vim.keymap.set("n", "<leader>u", "<cmd>UndotreeToggle<CR>", { desc = "Toggle undotree" })
   end)
-  defer_cmd("undotree", { "UndotreeToggle" })
 
   -- Which-key (immediate — we're already deferred via vim.schedule)
   ensure_loaded("which-key.nvim", function()
@@ -543,6 +554,18 @@ vim.schedule(function()
     vim.keymap.set("n", "<leader>bo", function() require("ezbookmarks").OpenBookmark() end,   { desc = "Open bookmark" })
     vim.keymap.set("n", "<leader>bi", function() require("ezbookmarks").AddIgnore() end,      { desc = "Ignore file" })
     vim.keymap.set("n", "<leader>bu", function() require("ezbookmarks").RemoveIgnore() end,   { desc = "Unignore file" })
+  end)
+
+  -- Flash.nvim (keys)
+  defer_keys("flash.nvim", {
+    { "s", desc = "Flash" },
+    { "S", desc = "Flash Treesitter" },
+    { "r", mode = "o", desc = "Remote Flash" },
+  }, function()
+    require("flash").setup({})
+    vim.keymap.set({ "n", "x", "o" }, "s", function() require("flash").jump() end, { desc = "Flash" })
+    vim.keymap.set({ "n", "x", "o" }, "S", function() require("flash").treesitter() end, { desc = "Flash Treesitter" })
+    vim.keymap.set("o", "r", function() require("flash").remote() end, { desc = "Remote Flash" })
   end)
 
   -- Vim-visual-multi (keys)
