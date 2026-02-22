@@ -24,3 +24,9 @@ vim.keymap.set("n", "<leader>nu", "<cmd>setlocal ff=unix<CR>", { desc = "Unix fo
 vim.keymap.set("n", "<leader>nm", "<cmd>setlocal ff=mac<CR>",  { desc = "Mac format" })
 
 vim.keymap.set("n", "<Esc>", ":nohlsearch<CR>", { silent = true, desc = "Clear search highlight" })
+
+-- PageUp/PageDown: scroll full page, move cursor
+vim.keymap.set("n", "<PageUp>",   "<C-b>", { desc = "Page up" })
+vim.keymap.set("n", "<PageDown>", "<C-f>", { desc = "Page down" })
+vim.keymap.set("i", "<PageUp>",   "<C-\\><C-o><C-b>", { desc = "Page up in insert mode" })
+vim.keymap.set("i", "<PageDown>", "<C-\\><C-o><C-f>", { desc = "Page down in insert mode" })

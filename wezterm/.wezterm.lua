@@ -365,7 +365,7 @@ end
 
 local action_pageup = function(window, pane)
   if pane:is_alt_screen_active() then
-    window:perform_action(act.SendKey{ key='PageUp', mods='None' }, pane)
+    window:perform_action(act.SendString('\x1b[5~'), pane)  -- CSI PageUp
   else
     window:perform_action(act.ScrollByPage(-0.5), pane)
   end
@@ -373,7 +373,7 @@ end
 
 local action_pagedown = function(window, pane)
   if pane:is_alt_screen_active() then
-    window:perform_action(act.SendKey{ key='PageDown', mods='None' }, pane)
+    window:perform_action(act.SendString('\x1b[6~'), pane)  -- CSI PageDown
   else
     window:perform_action(act.ScrollByPage(0.5), pane)
   end

@@ -193,361 +193,367 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 -------------------------------------------------------------------------------
--- Deferred-loading helper
+-- Plugin configs (scheduled after vim.pack finishes loading rtp)
 -------------------------------------------------------------------------------
 
-local loaded = {}
+vim.schedule(function()
 
-local function ensure_loaded(name, config_fn)
-  if loaded[name] then return end
-  loaded[name] = true
-  vim.cmd.packadd(name)
-  if config_fn then config_fn() end
-end
+  -- Deferred-loading helpers
+  local loaded = {}
 
-local function defer_keys(name, keys, config_fn)
-  for _, k in ipairs(keys) do
-    local mode = k.mode or "n"
-    vim.keymap.set(mode, k[1], function()
-      -- Delete all keymaps for this plugin so they don't loop
-      for _, k2 in ipairs(keys) do
-        pcall(vim.keymap.del, k2.mode or "n", k2[1])
-      end
-      ensure_loaded(name, config_fn)
-      local feed = vim.api.nvim_replace_termcodes(k[1], true, false, true)
-      vim.api.nvim_feedkeys(feed, "m", false)
-    end, { desc = k.desc or ("Lazy: " .. name) })
+  local function ensure_loaded(name, config_fn)
+    if loaded[name] then return end
+    loaded[name] = true
+    vim.cmd.packadd(name)
+    if config_fn then config_fn() end
   end
-end
 
-local function defer_event(name, events, config_fn)
-  vim.api.nvim_create_autocmd(events, {
-    once = true,
-    callback = function()
-      ensure_loaded(name, config_fn)
-    end,
-  })
-end
-
-local function defer_cmd(name, cmds, config_fn)
-  for _, c in ipairs(cmds) do
-    vim.api.nvim_create_user_command(c, function(a)
-      vim.api.nvim_del_user_command(c)
-      ensure_loaded(name, config_fn)
-      vim.cmd(c .. " " .. (a.args or ""))
-    end, { nargs = "*", desc = "Lazy: " .. c })
+  local function defer_keys(name, keys, config_fn)
+    for _, k in ipairs(keys) do
+      local mode = k.mode or "n"
+      vim.keymap.set(mode, k[1], function()
+        for _, k2 in ipairs(keys) do
+          pcall(vim.keymap.del, k2.mode or "n", k2[1])
+        end
+        ensure_loaded(name, config_fn)
+        local feed = vim.api.nvim_replace_termcodes(k[1], true, false, true)
+        vim.api.nvim_feedkeys(feed, "m", false)
+      end, { desc = k.desc or ("Lazy: " .. name) })
+    end
   end
-end
 
--------------------------------------------------------------------------------
--- Eager plugin configs (loaded at startup)
--------------------------------------------------------------------------------
-
--- Catppuccin
-do
-  local theme_grp = vim.api.nvim_create_augroup("MyThemeFixes", { clear = true })
-  vim.api.nvim_create_autocmd("ColorScheme", {
-    group = theme_grp,
-    callback = function()
-      vim.api.nvim_set_hl(0, "LineNr",       { fg = "#888466" })
-      vim.api.nvim_set_hl(0, "CursorLineNr", { fg = "#998477", bold = true })
-    end,
-  })
-  require("catppuccin").setup({ flavour = "mocha" })
-  vim.cmd.colorscheme "catppuccin"
-end
-
--- Lualine
-require('lualine').setup({
-  options = {
-    refresh = { statusline = 500, tabline = 500, winbar = 500 },
-    icons_enabled = true,
-    globalstatus = true,
-    theme = 'auto',
-    component_separators = { left = '', right = ''},
-    section_separators = { left = '', right = ''},
-    disabled_filetypes = {
-      statusline = {},
-      winbar = {},
-    },
-  },
-  sections = {
-    -- https://github.com/nvim-lualine/lualine.nvim/issues/1355
-    lualine_a = {
-      function()
-        local reg = vim.fn.reg_recording()
-        return reg ~= "" and ("Recording @%s"):format(reg) or require("lualine.components.mode")():upper()
+  local function defer_event(name, events, config_fn)
+    vim.api.nvim_create_autocmd(events, {
+      once = true,
+      callback = function()
+        ensure_loaded(name, config_fn)
       end,
+    })
+  end
+
+  local function defer_cmd(name, cmds, config_fn)
+    for _, c in ipairs(cmds) do
+      vim.api.nvim_create_user_command(c, function(a)
+        vim.api.nvim_del_user_command(c)
+        ensure_loaded(name, config_fn)
+        vim.cmd(c .. " " .. (a.args or ""))
+      end, { nargs = "*", desc = "Lazy: " .. c })
+    end
+  end
+
+  ---------------------------------------------------------------------------
+  -- Eager plugin configs — packadd first, then configure
+  ---------------------------------------------------------------------------
+
+  -- Load all eager plugins into rtp
+  vim.cmd.packadd("nvim")            -- catppuccin
+  vim.cmd.packadd("nvim-web-devicons")
+  vim.cmd.packadd("lualine.nvim")
+  vim.cmd.packadd("nui.nvim")
+  vim.cmd.packadd("nvim-notify")
+  vim.cmd.packadd("noice.nvim")
+  vim.cmd.packadd("nvim-treesitter")
+  vim.cmd.packadd("gitsigns.nvim")
+  vim.cmd.packadd("vim-sleuth")
+  vim.cmd.packadd("bufresize.nvim")
+  vim.cmd.packadd("persistence.nvim")
+  vim.cmd.packadd("project.nvim")
+  vim.cmd.packadd("plenary.nvim")
+
+  -- Catppuccin
+  do
+    local theme_grp = vim.api.nvim_create_augroup("MyThemeFixes", { clear = true })
+    vim.api.nvim_create_autocmd("ColorScheme", {
+      group = theme_grp,
+      callback = function()
+        vim.api.nvim_set_hl(0, "LineNr",       { fg = "#888466" })
+        vim.api.nvim_set_hl(0, "CursorLineNr", { fg = "#998477", bold = true })
+        set_marker_highlights()
+      end,
+    })
+    require("catppuccin").setup({ flavour = "mocha" })
+    vim.cmd.colorscheme "catppuccin"
+  end
+
+  -- Lualine
+  require('lualine').setup({
+    options = {
+      refresh = { statusline = 500, tabline = 500, winbar = 500 },
+      icons_enabled = true,
+      globalstatus = true,
+      theme = 'auto',
+      component_separators = { left = '', right = ''},
+      section_separators = { left = '', right = ''},
+      disabled_filetypes = {
+        statusline = {},
+        winbar = {},
+      },
     },
-    lualine_b = {'branch', 'diff', 'diagnostics'},
-    lualine_c = {{
-      'filename',
-      path = 2, -- 0 = just filename, 1 = relative path, 2 = absolute path
-    }},
-    lualine_x = {
-      {
+    sections = {
+      lualine_a = {
         function()
-          if vim.bo.eol then return '' else return '[No EOF]' end
+          local reg = vim.fn.reg_recording()
+          return reg ~= "" and ("Recording @%s"):format(reg) or require("lualine.components.mode")():upper()
         end,
-        color = { fg = '#FFAAAA', gui = 'bold' }
       },
-      'encoding', 'fileformat', 'filetype', 'filesize'
-    },
-    lualine_y = {'progress'},
-    lualine_z = {'location'}
-  },
-  inactive_sections = {
-    lualine_c = {{'filename', path = 1}},
-    lualine_x = {'location'},
-  },
-})
-
--- Noice
-require("noice").setup({
-  timeout = 7000,
-
-  lsp = {
-    override = {
-      ["vim.lsp.util.convert_input_to_markdown_lines"] = true,
-      ["vim.lsp.util.stylize_markdown"] = true,
-      ["cmp.entry.get_documentation"] = true,
-    },
-  },
-
-  presets = {
-    bottom_search = true,
-    command_palette = true,
-    long_message_to_split = true,
-    inc_rename = false,
-    lsp_doc_border = true,
-  },
-
-  routes = {
-    {
-      filter = {
-        any = { { event = "msg_show" }, { event = "notify" } },
-        find = "vim%.lsp%..*deprecated",
-      },
-      opts = { skip = true },
-    },
-    {
-      filter = {
-        any = { { event = "msg_show" }, { event = "notify" } },
-        find = "vim%.tbl_islist.*deprecated",
-      },
-      opts = { skip = true },
-    },
-    {
-      filter = {
-        any = { { event = "msg_show" }, { event = "notify" } },
-        find = "EPERM",
-      },
-      opts = { skip = true },
-    },
-    {
-      filter = { event = "msg_show", any = {
-        { find = "Visual%-Multi" },
-        { find = "VM " },
-        { find = "V%-M" },
+      lualine_b = {'branch', 'diff', 'diagnostics'},
+      lualine_c = {{
+        'filename',
+        path = 2,
       }},
-      opts = { skip = true },
-    },
-  },
-})
-
--- Treesitter
-require("nvim-treesitter.configs").setup({
-  ensure_installed = {
-    "bash","c","cpp","diff","go","html","javascript","json","julia","lua","markdown",
-    "python","rust","toml","typescript","vim","vimdoc","xml","yaml","zig","csv",
-  },
-  sync_install = false,
-  auto_install = false,
-  highlight = {
-    enable = true,
-    additional_vim_regex_highlighting = false,
-  },
-  indent = { enable = true },
-  incremental_selection = {
-    enable = true,
-    keymaps = {
-      init_selection = "gnn",
-      node_incremental = "grn",
-      node_decremental = "grm",
-      scope_incremental = "grc",
-    },
-  },
-})
-
--- Gitsigns
-require("gitsigns").setup({})
-
--- Persistence
-require("persistence").setup({
-  options = { "buffers", "curdir", "tabpages", "winsize" },
-  pre_save = function()
-    pcall(vim.cmd, "Neotree close")
-    pcall(vim.cmd, "Oil close")
-  end,
-})
-vim.keymap.set("n", "<leader>qs", function() require("persistence").load() end,              { desc = "Persistence load session" })
-vim.keymap.set("n", "<leader>qS", function() require("persistence").select() end,            { desc = "Persistence select session" })
-vim.keymap.set("n", "<leader>ql", function() require("persistence").load({ last = true }) end, { desc = "Persistence load last session" })
-vim.keymap.set("n", "<leader>qd", function() require("persistence").stop() end,              { desc = "Persistence stop session" })
-
--- Project.nvim
-require("project_nvim").setup({})
-
--- Bufresize
-require("bufresize").setup({})
-
--------------------------------------------------------------------------------
--- Deferred plugin configs
--------------------------------------------------------------------------------
-
--- Telescope (keys)
-local function telescope_config()
-  local telescope = require("telescope")
-  local themes = require("telescope.themes")
-  telescope.setup({
-    defaults = {
-      file_ignore_patterns = { "%.git/", "node_modules/", "dist/", "target/" },
-      path_display = { "smart" },
-      dynamic_preview_title = true,
-    },
-    extensions = {
-      fzf = {
-        fuzzy = true,
-        override_generic_sorter = true,
-        override_file_sorter = true,
-        case_mode = "smart_case",
+      lualine_x = {
+        {
+          function()
+            if vim.bo.eol then return '' else return '[No EOF]' end
+          end,
+          color = { fg = '#FFAAAA', gui = 'bold' }
+        },
+        'encoding', 'fileformat', 'filetype', 'filesize'
       },
-      ["ui-select"] = themes.get_dropdown({}),
+      lualine_y = {'progress'},
+      lualine_z = {'location'}
+    },
+    inactive_sections = {
+      lualine_c = {{'filename', path = 1}},
+      lualine_x = {'location'},
     },
   })
-  pcall(telescope.load_extension, "fzf")
-  pcall(telescope.load_extension, "ui-select")
-  pcall(telescope.load_extension, "projects")
-end
 
-defer_keys("telescope.nvim", {
-  { "<leader>ff", desc = "Telescope find files" },
-  { "<leader>fg", desc = "Telescope live grep" },
-  { "<leader>fb", desc = "Telescope buffers" },
-  { "<leader>fh", desc = "Telescope help tags" },
-  { "<leader>p",  desc = "Toggle projects" },
-}, function()
-  -- Also load telescope extensions
-  vim.cmd.packadd("telescope-fzf-native.nvim")
-  vim.cmd.packadd("telescope-ui-select.nvim")
-  telescope_config()
-
-  -- Set up real keymaps now that telescope is loaded
-  vim.keymap.set("n", "<leader>ff", "<cmd>Telescope find_files hidden=true<CR>", { desc = "Telescope find files" })
-  vim.keymap.set("n", "<leader>fg", function() require("telescope.builtin").live_grep() end, { desc = "Telescope live grep" })
-  vim.keymap.set("n", "<leader>fb", function() require("telescope.builtin").buffers() end, { desc = "Telescope buffers" })
-  vim.keymap.set("n", "<leader>fh", function() require("telescope.builtin").help_tags() end, { desc = "Telescope help tags" })
-  vim.keymap.set("n", "<leader>p", "<cmd>Telescope projects<CR>", { desc = "Toggle projects" })
-end)
-
--- Neo-tree (keys)
-defer_keys("neo-tree.nvim", {
-  { "<leader>t", desc = "Toggle neo-tree" },
-}, function()
-  require("neo-tree").setup({
-    filesystem = {
-      follow_current_file = { enabled = true },
-      filtered_items = {
-        visible = false,
-        hide_dotfiles = false,
-        hide_gitignored = false,
-        hide_hidden = false,
-        always_show = { ".config", ".zshrc" },
+  -- Noice
+  require("noice").setup({
+    timeout = 7000,
+    lsp = {
+      override = {
+        ["vim.lsp.util.convert_input_to_markdown_lines"] = true,
+        ["vim.lsp.util.stylize_markdown"] = true,
+        ["cmp.entry.get_documentation"] = true,
+      },
+    },
+    presets = {
+      bottom_search = true,
+      command_palette = true,
+      long_message_to_split = true,
+      inc_rename = false,
+      lsp_doc_border = true,
+    },
+    routes = {
+      {
+        filter = {
+          any = { { event = "msg_show" }, { event = "notify" } },
+          find = "vim%.lsp%..*deprecated",
+        },
+        opts = { skip = true },
+      },
+      {
+        filter = {
+          any = { { event = "msg_show" }, { event = "notify" } },
+          find = "vim%.tbl_islist.*deprecated",
+        },
+        opts = { skip = true },
+      },
+      {
+        filter = {
+          any = { { event = "msg_show" }, { event = "notify" } },
+          find = "EPERM",
+        },
+        opts = { skip = true },
+      },
+      {
+        filter = { event = "msg_show", any = {
+          { find = "Visual%-Multi" },
+          { find = "VM " },
+          { find = "V%-M" },
+        }},
+        opts = { skip = true },
       },
     },
   })
-  vim.keymap.set("n", "<leader>t", "<cmd>Neotree toggle<CR>", { desc = "Toggle neo-tree" })
-end)
 
--- Oil (keys)
-defer_keys("oil.nvim", {
-  { "-", desc = "Open parent directory" },
-}, function()
-  require("oil").setup({
-    view_options = { show_hidden = true },
-    case_insensitive = true,
+  -- Treesitter (new API: require("nvim-treesitter").setup)
+  require("nvim-treesitter").setup({
+    ensure_installed = {
+      "bash","c","cpp","diff","go","html","javascript","json","julia","lua","markdown",
+      "python","rust","toml","typescript","vim","vimdoc","xml","yaml","zig","csv",
+    },
+    sync_install = false,
+    auto_install = false,
+    highlight = {
+      enable = true,
+      additional_vim_regex_highlighting = false,
+    },
+    indent = { enable = true },
+    incremental_selection = {
+      enable = true,
+      keymaps = {
+        init_selection = "gnn",
+        node_incremental = "grn",
+        node_decremental = "grm",
+        scope_incremental = "grc",
+      },
+    },
   })
-  vim.keymap.set("n", "-", "<cmd>Oil<CR>", { desc = "Open parent directory" })
-end)
 
--- Grug-far (keys + cmd)
-defer_keys("grug-far.nvim", {
-  { "<leader>g", desc = "Grug" },
-}, function()
-  vim.keymap.set("n", "<leader>g", "<cmd>GrugFar<CR>", { desc = "Grug" })
-end)
-defer_cmd("grug-far.nvim", { "GrugFar" })
+  -- Gitsigns
+  require("gitsigns").setup({})
 
--- Undotree (keys + cmd)
-defer_keys("undotree", {
-  { "<leader>u", desc = "Toggle undotree" },
-}, function()
-  vim.keymap.set("n", "<leader>u", "<cmd>UndotreeToggle<CR>", { desc = "Toggle undotree" })
-end)
-defer_cmd("undotree", { "UndotreeToggle" })
+  -- Persistence
+  require("persistence").setup({
+    options = { "buffers", "curdir", "tabpages", "winsize" },
+    pre_save = function()
+      pcall(vim.cmd, "Neotree close")
+      pcall(vim.cmd, "Oil close")
+    end,
+  })
+  vim.keymap.set("n", "<leader>qs", function() require("persistence").load() end,              { desc = "Persistence load session" })
+  vim.keymap.set("n", "<leader>qS", function() require("persistence").select() end,            { desc = "Persistence select session" })
+  vim.keymap.set("n", "<leader>ql", function() require("persistence").load({ last = true }) end, { desc = "Persistence load last session" })
+  vim.keymap.set("n", "<leader>qd", function() require("persistence").stop() end,              { desc = "Persistence stop session" })
 
--- Which-key (short defer after startup)
-vim.api.nvim_create_autocmd("VimEnter", {
-  once = true,
-  callback = function()
-    vim.defer_fn(function()
-      ensure_loaded("which-key.nvim", function()
-        local wk = require("which-key")
-        wk.setup({ preset = "helix" })
-        wk.add({
-          { "<leader>b", group = "Bookmarks" },
-          { "<leader>f", group = "Telescope" },
-          { "<leader>n", group = "EOL format" },
-          { "<leader>q", group = "Persistence" },
-        })
-      end)
-    end, 50) -- 50ms after VimEnter, invisible to user
-  end,
-})
+  -- Project.nvim
+  require("project_nvim").setup({})
 
--- Nvim-autopairs (InsertEnter)
-defer_event("nvim-autopairs", "InsertEnter", function()
-  require("nvim-autopairs").setup({})
-end)
+  -- Bufresize
+  require("bufresize").setup({})
 
--- Ezbookmarks (keys)
-defer_keys("ezbookmarks.nvim", {
-  { "<leader>ba", desc = "Add bookmark" },
-  { "<leader>br", desc = "Remove bookmark" },
-  { "<leader>bo", desc = "Open bookmark" },
-  { "<leader>bi", desc = "Ignore file" },
-  { "<leader>bu", desc = "Unignore file" },
-}, function()
-  vim.keymap.set("n", "<leader>ba", function() require("ezbookmarks").AddBookmark() end,    { desc = "Add bookmark" })
-  vim.keymap.set("n", "<leader>br", function() require("ezbookmarks").RemoveBookmark() end, { desc = "Remove bookmark" })
-  vim.keymap.set("n", "<leader>bo", function() require("ezbookmarks").OpenBookmark() end,   { desc = "Open bookmark" })
-  vim.keymap.set("n", "<leader>bi", function() require("ezbookmarks").AddIgnore() end,      { desc = "Ignore file" })
-  vim.keymap.set("n", "<leader>bu", function() require("ezbookmarks").RemoveIgnore() end,   { desc = "Unignore file" })
-end)
+  ---------------------------------------------------------------------------
+  -- Deferred plugin configs
+  ---------------------------------------------------------------------------
 
--- Vim-visual-multi (keys)
-do
-  -- Set globals before loading
+  -- Telescope (keys)
+  local function telescope_config()
+    local telescope = require("telescope")
+    local themes = require("telescope.themes")
+    telescope.setup({
+      defaults = {
+        file_ignore_patterns = { "%.git/", "node_modules/", "dist/", "target/" },
+        path_display = { "smart" },
+        dynamic_preview_title = true,
+      },
+      extensions = {
+        fzf = {
+          fuzzy = true,
+          override_generic_sorter = true,
+          override_file_sorter = true,
+          case_mode = "smart_case",
+        },
+        ["ui-select"] = themes.get_dropdown({}),
+      },
+    })
+    pcall(telescope.load_extension, "fzf")
+    pcall(telescope.load_extension, "ui-select")
+    pcall(telescope.load_extension, "projects")
+  end
+
+  defer_keys("telescope.nvim", {
+    { "<leader>ff", desc = "Telescope find files" },
+    { "<leader>fg", desc = "Telescope live grep" },
+    { "<leader>fb", desc = "Telescope buffers" },
+    { "<leader>fh", desc = "Telescope help tags" },
+    { "<leader>p",  desc = "Toggle projects" },
+  }, function()
+    vim.cmd.packadd("telescope-fzf-native.nvim")
+    vim.cmd.packadd("telescope-ui-select.nvim")
+    telescope_config()
+    vim.keymap.set("n", "<leader>ff", "<cmd>Telescope find_files hidden=true<CR>", { desc = "Telescope find files" })
+    vim.keymap.set("n", "<leader>fg", function() require("telescope.builtin").live_grep() end, { desc = "Telescope live grep" })
+    vim.keymap.set("n", "<leader>fb", function() require("telescope.builtin").buffers() end, { desc = "Telescope buffers" })
+    vim.keymap.set("n", "<leader>fh", function() require("telescope.builtin").help_tags() end, { desc = "Telescope help tags" })
+    vim.keymap.set("n", "<leader>p", "<cmd>Telescope projects<CR>", { desc = "Toggle projects" })
+  end)
+
+  -- Neo-tree (keys)
+  defer_keys("neo-tree.nvim", {
+    { "<leader>t", desc = "Toggle neo-tree" },
+  }, function()
+    require("neo-tree").setup({
+      filesystem = {
+        follow_current_file = { enabled = true },
+        filtered_items = {
+          visible = false,
+          hide_dotfiles = false,
+          hide_gitignored = false,
+          hide_hidden = false,
+          always_show = { ".config", ".zshrc" },
+        },
+      },
+    })
+    vim.keymap.set("n", "<leader>t", "<cmd>Neotree toggle<CR>", { desc = "Toggle neo-tree" })
+  end)
+
+  -- Oil (keys)
+  defer_keys("oil.nvim", {
+    { "-", desc = "Open parent directory" },
+  }, function()
+    require("oil").setup({
+      view_options = { show_hidden = true },
+      case_insensitive = true,
+    })
+    vim.keymap.set("n", "-", "<cmd>Oil<CR>", { desc = "Open parent directory" })
+  end)
+
+  -- Grug-far (keys + cmd)
+  defer_keys("grug-far.nvim", {
+    { "<leader>g", desc = "Grug" },
+  }, function()
+    vim.keymap.set("n", "<leader>g", "<cmd>GrugFar<CR>", { desc = "Grug" })
+  end)
+  defer_cmd("grug-far.nvim", { "GrugFar" })
+
+  -- Undotree (keys + cmd)
+  defer_keys("undotree", {
+    { "<leader>u", desc = "Toggle undotree" },
+  }, function()
+    vim.keymap.set("n", "<leader>u", "<cmd>UndotreeToggle<CR>", { desc = "Toggle undotree" })
+  end)
+  defer_cmd("undotree", { "UndotreeToggle" })
+
+  -- Which-key (immediate — we're already deferred via vim.schedule)
+  ensure_loaded("which-key.nvim", function()
+    local wk = require("which-key")
+    wk.setup({ preset = "helix" })
+    wk.add({
+      { "<leader>b", group = "Bookmarks" },
+      { "<leader>f", group = "Telescope" },
+      { "<leader>n", group = "EOL format" },
+      { "<leader>q", group = "Persistence" },
+      { "<leader>t", desc = "Toggle neo-tree" },
+      { "<leader>g", desc = "Grug search/replace" },
+      { "<leader>u", desc = "Toggle undotree" },
+      { "<leader>p", desc = "Projects" },
+      { "<leader>w", desc = "Toggle wrap" },
+      { "<leader>e", desc = "Toggle EOF" },
+    })
+  end)
+
+  -- Nvim-autopairs (InsertEnter)
+  defer_event("nvim-autopairs", "InsertEnter", function()
+    require("nvim-autopairs").setup({})
+  end)
+
+  -- Ezbookmarks (keys)
+  defer_keys("ezbookmarks.nvim", {
+    { "<leader>ba", desc = "Add bookmark" },
+    { "<leader>br", desc = "Remove bookmark" },
+    { "<leader>bo", desc = "Open bookmark" },
+    { "<leader>bi", desc = "Ignore file" },
+    { "<leader>bu", desc = "Unignore file" },
+  }, function()
+    vim.keymap.set("n", "<leader>ba", function() require("ezbookmarks").AddBookmark() end,    { desc = "Add bookmark" })
+    vim.keymap.set("n", "<leader>br", function() require("ezbookmarks").RemoveBookmark() end, { desc = "Remove bookmark" })
+    vim.keymap.set("n", "<leader>bo", function() require("ezbookmarks").OpenBookmark() end,   { desc = "Open bookmark" })
+    vim.keymap.set("n", "<leader>bi", function() require("ezbookmarks").AddIgnore() end,      { desc = "Ignore file" })
+    vim.keymap.set("n", "<leader>bu", function() require("ezbookmarks").RemoveIgnore() end,   { desc = "Unignore file" })
+  end)
+
+  -- Vim-visual-multi (keys)
   vim.g.VM_sublime_mappings = true
   vim.g.VM_default_mappings = false
   vim.g.VM_maps = {
     ['Find Under'] = '<C-d>',
     ['Find Subword Under'] = '<C-d>',
   }
-end
+  defer_keys("vim-visual-multi", {
+    { "<C-d>", desc = "VM Find Under" },
+  }, function() end)
 
-defer_keys("vim-visual-multi", {
-  { "<C-d>", desc = "VM Find Under" },
-}, function()
-  -- vim-visual-multi is vimscript — packadd is enough, globals already set
-end)
+end) -- vim.schedule
