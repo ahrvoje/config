@@ -551,5 +551,3 @@ defer_keys("vim-visual-multi", {
 }, function()
   -- vim-visual-multi is vimscript — packadd is enough, globals already set
 end)
-
-
