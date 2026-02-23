@@ -36,3 +36,4 @@ set search-ignore-case                        on
 "\M-b":        "luafunc:fzf_bindings"           # Alt-B lists key bindings; choose one to invoke it.
 "\t":          "luafunc:fzf_complete"           # Tab uses fzf to filter match completions, but only when preceded by '**' (recursive).
 "\e[27;5;32~": "luafunc:fzf_complete_force"     # Ctrl-Space uses fzf to filter match completions (and supports '**' for recursive).
+"\C-y":        "luafunc:fzf_disks"              # Ctrl-Y lists files across all local disks; choose one or multiple to insert them.
