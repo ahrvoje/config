@@ -66,13 +66,13 @@ function fzf_disks(rl_buffer, line_state)
         end
     end
 
-    local height = (settings and settings.get and settings.get("fzf.height"))
-                   or "40%"
+    local height = (settings and settings.get and settings.get("fzf.height")) or "40%"
 
     -- 4. Build command
     local cmd = string.format(
         "%s --height %s --reverse --scheme=path -i -m"
-        .. " --walker=file --walker-root %s",
+        .. " --walker=file --walker-root %s"
+        .. " --bind esc:abort",
         fzf, height, table.concat(drives, " ")
     )
 
