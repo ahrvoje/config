@@ -272,7 +272,8 @@ local action_exit_shell = function(window, pane)
     window:perform_action(act.SendString 'exit\r', pane)
 
   elseif shell == 'cmd' then
-    window:perform_action(act.SendString 'exit\r', pane)
+    -- Ctrl-U clears line without executing, then exit
+    window:perform_action(act.SendString '\x15exit\r', pane)
 
   else
     window:perform_action(act.SendKey { key='d', mods='CTRL' }, pane)
