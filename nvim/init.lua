@@ -145,7 +145,7 @@ local gh = function(x) return 'https://github.com/' .. x end
 
 vim.pack.add({
   -- UI: colorscheme, statusline, notifications
-  gh('catppuccin/nvim'),
+  gh('maxmx03/solarized.nvim'),
   gh('nvim-lualine/lualine.nvim'),
   gh('nvim-tree/nvim-web-devicons'),
   gh('folke/noice.nvim'),
@@ -248,7 +248,7 @@ vim.schedule(function()
   ---------------------------------------------------------------------------
 
   -- Load all eager plugins into rtp
-  vim.cmd.packadd("nvim")            -- catppuccin
+  vim.cmd.packadd("solarized.nvim")
   vim.cmd.packadd("nvim-web-devicons")
   vim.cmd.packadd("lualine.nvim")
   vim.cmd.packadd("nui.nvim")
@@ -263,19 +263,18 @@ vim.schedule(function()
   vim.cmd.packadd("project.nvim")
   vim.cmd.packadd("plenary.nvim")
 
-  -- Catppuccin
+  -- Solarized
   do
     local theme_grp = vim.api.nvim_create_augroup("MyThemeFixes", { clear = true })
     vim.api.nvim_create_autocmd("ColorScheme", {
       group = theme_grp,
       callback = function()
-        vim.api.nvim_set_hl(0, "LineNr",       { fg = "#888466" })
-        vim.api.nvim_set_hl(0, "CursorLineNr", { fg = "#998477", bold = true })
         set_marker_highlights()
       end,
     })
-    require("catppuccin").setup({ flavour = "mocha" })
-    vim.cmd.colorscheme "catppuccin"
+    require("solarized").setup({})
+    vim.o.background = "dark"
+    vim.cmd.colorscheme "solarized"
   end
 
   -- Bufferline
@@ -315,6 +314,11 @@ vim.schedule(function()
         path = 2,
       }},
       lualine_x = {
+        {
+          function()
+            return vim.wo.wrap and '↩' or ''
+          end,
+        },
         {
           function()
             if vim.bo.eol then return '' else return '[No EOF]' end
@@ -533,6 +537,8 @@ vim.schedule(function()
       { "<leader>p", desc = "Projects" },
       { "<leader>w", desc = "Toggle wrap" },
       { "<leader>e", desc = "Toggle EOF" },
+      { "<leader>x", desc = "Close buffer" },
+      { "<leader>s", desc = "Toggle solarized dark/light" },
     })
   end)
 

@@ -23,6 +23,12 @@ vim.keymap.set("n", "<leader>nd", "<cmd>setlocal ff=dos<CR>",  { desc = "DOS for
 vim.keymap.set("n", "<leader>nu", "<cmd>setlocal ff=unix<CR>", { desc = "Unix format" })
 vim.keymap.set("n", "<leader>nm", "<cmd>setlocal ff=mac<CR>",  { desc = "Mac format" })
 
+vim.keymap.set("n", "<leader>s", function()
+  vim.o.background = vim.o.background == "dark" and "light" or "dark"
+end, { desc = "Toggle solarized dark/light" })
+
+vim.keymap.set("n", "<leader>x", "<cmd>bd<CR>", { desc = "Close buffer" })
+
 vim.keymap.set("n", "<Esc>", ":nohlsearch<CR>", { silent = true, desc = "Clear search highlight" })
 
 -- PageUp/PageDown: scroll full page, move cursor
