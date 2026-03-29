@@ -1043,10 +1043,12 @@ local function get_display_cwd(pane, process_cwd, process_pid)
   local ok, cwd = pcall(pane.get_current_working_dir, pane)
   local display_cwd = ''
   if ok and cwd then
-    if type(cwd) == 'table' and cwd.file_path then
-      display_cwd = normalize_path(cwd.file_path)
-    elseif type(cwd) == 'string' then
+    if type(cwd) == 'string' then
       display_cwd = normalize_path(cwd)
+    elseif cwd.file_path then
+      display_cwd = normalize_path(cwd.file_path)
+    else
+      display_cwd = normalize_path(tostring(cwd))
     end
   elseif type(process_cwd) == 'string' and process_cwd ~= '' then
     display_cwd = normalize_path(process_cwd)

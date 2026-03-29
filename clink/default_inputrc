@@ -39,3 +39,5 @@ set search-ignore-case                        on
 "\C-y":        "luafunc:fzf_disks"              # Ctrl-Y lists files across all local disks; choose one or multiple to insert them.
 "\M-z":        "luafunc:zoxide_interactive"      # Alt-Z shows zoxide directory history; choose one to cd to it.
 "\M-d":        clink-popup-directories           # Alt-D shows clink's built-in directory history popup.
+"\e[27;5;13~": "luafunc:rex_submit"              # Ctrl-Enter sends input to Rex AI instead of cmd.exe.
+"\e[13;5u":    "luafunc:rex_submit"              # Ctrl-Enter CSI u fallback for Rex AI.
