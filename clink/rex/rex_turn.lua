@@ -222,20 +222,42 @@ function M.strip_shell_command(text)
 end
 
 -- ================================================================
+-- Session-mutating command detection
+-- ================================================================
+
+--- Determine whether a cmd command is session-mutating (cd, set, pushd, popd).
+--- These commands must affect the live interactive session, not just a child
+--- shell.
+function M.is_session_mutating(cmd_info)
+    if not cmd_info or cmd_info.shell ~= "cmd" then return false end
+    local lower = cmd_info.command:lower():match("^%s*(.-)%s*$")
+    return lower:find("^cd%s") or lower:find("^cd$")
+        or lower:find("^cd%s*/d%s") or lower:find("^chdir%s")
+        or lower:find("^chdir$") or lower:find("^pushd%s")
+        or lower:find("^pushd$") or lower:find("^popd")
+        or lower:find("^set%s+%w")
+end
+
+-- ================================================================
 -- Shell-command execution
 -- ================================================================
 
 --- Execute a parsed shell command in a child shell and capture results.
---- For cmd: detects cd/set commands and captures side effects so they
---- can be applied to the live interactive session afterward.
---- Returns {output, exit_code, final_cwd, env_changes}.
+--- Returns {output, exit_code, final_cwd, env_changes, inject_command}.
+---
+--- For session-mutating commands (cd, set, pushd, popd):
+---   - Runs in a child shell for validation and output capture.
+---   - Sets inject_command to the original command so the caller can inject
+---     it into the live interactive session via rl_buffer:setbuffer() +
+---     rl.invokecommand("accept-line").
 function M.execute_shell_command(cmd_info)
     if not cmd_info or not cmd_info.command then
         return {output = "", exit_code = -1, final_cwd = nil, env_changes = nil}
     end
 
     local command = cmd_info.command
-    local result = {output = "", exit_code = 0, final_cwd = nil, env_changes = nil}
+    local result = {output = "", exit_code = 0, final_cwd = nil, env_changes = nil,
+                    inject_command = nil}
 
     if cmd_info.shell == "cmd" then
         local cwd_part = ""
@@ -248,12 +270,14 @@ function M.execute_shell_command(cmd_info)
         local is_cd = lower_cmd:find("^cd%s") or lower_cmd:find("^cd$")
                    or lower_cmd:find("^cd%s*/d%s")
                    or lower_cmd:find("^chdir%s") or lower_cmd:find("^chdir$")
-                   or lower_cmd:find("^pushd%s") or lower_cmd:find("^popd")
+                   or lower_cmd:find("^pushd%s") or lower_cmd:find("^pushd$")
+                   or lower_cmd:find("^popd")
         local is_set = lower_cmd:find("^set%s+%w")
 
         if is_cd then
-            -- Run the cd/pushd/popd in a child cmd, then print the resulting
-            -- directory on the last line so we can capture it.
+            -- Run cd/pushd/popd in a child shell to validate and capture the
+            -- resulting directory.  Append "cd" after the command to print the
+            -- final working directory on the last output line.
             local full_cmd = 'cmd /c "' .. cwd_part .. command .. ' && cd" 2>&1'
             local pipe = io.popen(full_cmd)
             if pipe then
@@ -270,6 +294,9 @@ function M.execute_shell_command(cmd_info)
                 table.remove(lines)
                 result.output = table.concat(lines, "\n")
             end
+            -- The actual command must be injected into the live session so
+            -- cmd.exe applies its own builtin cd/pushd/popd semantics.
+            result.inject_command = command
 
         elseif is_set then
             -- Parse the set command to extract variable assignment
@@ -279,6 +306,8 @@ function M.execute_shell_command(cmd_info)
                 if var_name then
                     -- "set VAR=value" or "set VAR=" (clear)
                     result.env_changes = {{name = var_name, value = var_val}}
+                    -- Inject into the live session so the env var persists.
+                    result.inject_command = command
                 else
                     -- "set VAR" without = just displays the variable
                     local full_cmd = 'cmd /c "' .. cwd_part .. command .. '" 2>&1'
@@ -291,7 +320,7 @@ function M.execute_shell_command(cmd_info)
             end
 
         else
-            -- General command execution
+            -- General (non-mutating) command execution
             local full_cmd = 'cmd /c "' .. cwd_part .. command .. '" 2>&1'
             local pipe = io.popen(full_cmd)
             if pipe then
@@ -316,35 +345,6 @@ function M.execute_shell_command(cmd_info)
     end
 
     return result
-end
-
---- Apply session-mutating side effects from a shell command execution
---- to the live interactive Clink/cmd.exe session so they persist
---- into the next prompt.
-function M.apply_session_effects(exec_result)
-    if not exec_result then return end
-
-    -- Apply directory change
-    if exec_result.final_cwd and exec_result.final_cwd ~= "" then
-        -- os.chdir is available in Clink's Lua environment and changes
-        -- the process working directory of the interactive session.
-        if os.chdir then
-            os.chdir(exec_result.final_cwd)
-        end
-    end
-
-    -- Apply environment variable changes
-    if exec_result.env_changes then
-        for _, change in ipairs(exec_result.env_changes) do
-            if os.setenv then
-                if change.value == "" then
-                    os.setenv(change.name, nil)
-                else
-                    os.setenv(change.name, change.value)
-                end
-            end
-        end
-    end
 end
 
 --- Format a shell transcript for terminal display.

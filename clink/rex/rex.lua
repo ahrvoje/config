@@ -379,6 +379,10 @@ end
 --- The caller is responsible for writing the user-side history and recall
 --- entry BEFORE calling this function, so that the user prompt is durably
 --- persisted before the network call can fail.
+---
+--- Returns inject_command (string or nil) for session-mutating shell commands
+--- that must be injected into the live interactive session via
+--- rl_buffer:setbuffer() + rl.invokecommand("accept-line").
 local function send_to_llm(prompt)
     -- Determine shell authorization for this turn
     local shell_authorized = turn_mod.is_shell_authorized(prompt)
@@ -412,7 +416,7 @@ local function send_to_llm(prompt)
         -- Record error outcome immediately
         state_mod.add_history("assistant", err_text)
         state_mod.recall_append("error", err_text)
-        return
+        return nil
     end
 
     -- Check for shell-command protocol before post-processing.
@@ -423,9 +427,6 @@ local function send_to_llm(prompt)
             -- Execute the shell command
             local exec_result = turn_mod.execute_shell_command(cmd_info)
 
-            -- Apply session-mutating effects (cd, set) to the live session
-            turn_mod.apply_session_effects(exec_result)
-
             -- Format and print transcript
             local transcript = turn_mod.format_shell_transcript(cmd_info, exec_result)
             clink.print(transcript)
@@ -433,7 +434,11 @@ local function send_to_llm(prompt)
             -- Store assistant side in history and recall
             state_mod.add_history("assistant", transcript)
             state_mod.recall_append("shell", transcript)
-            return
+
+            -- Return the inject command for session-mutating commands (cd, set,
+            -- pushd, popd) so the caller can apply the effect to the live
+            -- interactive cmd.exe session via rl_buffer + accept-line.
+            return exec_result.inject_command
         end
     end
 
@@ -455,6 +460,7 @@ local function send_to_llm(prompt)
     -- Store assistant side in history and recall
     state_mod.add_history("assistant", response)
     state_mod.recall_append("assistant", response)
+    return nil
 end
 
 -- ================================================================
@@ -468,25 +474,33 @@ function rex_submit(rl_buffer)
     -- Ignore empty input
     if not trimmed or trimmed == "" then return end
 
-    -- Determine the execution path before touching the buffer
+    -- Classify the input to determine the execution path BEFORE touching
+    -- the buffer, so we choose the correct history and clearing strategy.
     local is_slash = trimmed:sub(1, 1) == "/"
-    local is_popup_only = (trimmed == "/model") or (trimmed == "/mode") or (trimmed == "/memory")
-    local needs_onboarding = not state_mod.has_model()
+    local is_popup_slash = (trimmed == "/model") or (trimmed == "/mode") or (trimmed == "/memory")
+    -- Non-popup slash commands (/help, /context, unknown /foo) always use the
+    -- print path regardless of model state; they never trigger onboarding.
+    local is_print_slash = is_slash and not is_popup_slash
+    -- Onboarding is only triggered by non-slash normal prompts when no model
+    -- is configured.  Slash commands handle their own prerequisites.
+    local needs_onboarding = not is_slash and not state_mod.has_model()
 
     -- ----------------------------------------------------------------
     -- Path selection: choose the correct history and clearing strategy
     -- ----------------------------------------------------------------
 
-    if not is_popup_only and not needs_onboarding then
-        -- PRINT PATH: beginoutput first (preserves typed text on screen),
-        -- then add-history (appends to shell history and clears edit line).
-        rl_buffer:beginoutput()
-        rl.invokecommand("add-history")
-
-    elseif is_popup_only then
+    if is_popup_slash then
         -- POPUP-ONLY PATH: add-history records the slash command and clears
         -- the edit line without beginoutput, so no phantom prompt appears
         -- before the popup.
+        rl.invokecommand("add-history")
+
+    elseif is_print_slash or not needs_onboarding then
+        -- PRINT PATH: beginoutput first (preserves typed text on screen),
+        -- then add-history (appends to shell history and clears edit line).
+        -- Covers normal prompts with a model configured AND non-popup slash
+        -- commands like /help, /context, unknown /foo.
+        rl_buffer:beginoutput()
         rl.invokecommand("add-history")
 
     else
@@ -563,7 +577,17 @@ function rex_submit(rl_buffer)
     end
     state_mod.add_history("user", trimmed)
 
-    send_to_llm(trimmed)
+    local inject = send_to_llm(trimmed)
+
+    -- For session-mutating shell commands (cd, set, pushd, popd), inject the
+    -- command into the live interactive cmd.exe session so the effect persists
+    -- into the next prompt.  rl_buffer:setbuffer() replaces the buffer content
+    -- and rl.invokecommand("accept-line") causes readline to return the
+    -- injected command to cmd.exe for execution when rex_submit returns.
+    if inject then
+        rl_buffer:setbuffer(inject)
+        rl.invokecommand("accept-line")
+    end
 end
 
 -- ================================================================
