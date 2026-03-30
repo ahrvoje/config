@@ -1,472 +1,422 @@
--- rex.lua -- Clink entrypoint: key binding, rl_buffer handling, slash-command
--- dispatch, popup orchestration, onboarding flow.
+-- rex.lua — Clink entrypoint: key binding, rl_buffer handling,
+-- slash-command dispatch, popup orchestration, onboarding flow.
 --
--- Owns: rex_submit (global), key bindings, readline buffer management,
--- popup orchestration for /model, /mode, /memory, onboarding, slash-command
--- dispatch, LLM request orchestration.
--- Does NOT own: durable state, HTTP transport, prompt framing, ANSI rendering.
+-- This file is the Clink-facing layer only. It loads the three sibling
+-- implementation files by explicit path and delegates all non-UI logic
+-- to them.
 
 -- ================================================================
--- Module loading -- explicit path via dofile() to avoid collisions
--- with clink-completions or other scripts that ship their own json.lua.
+-- Module loading by explicit sibling path
 -- ================================================================
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.+[\\/])")
-
 local json         = dofile(script_dir .. "json.lua")
 local state_mod    = dofile(script_dir .. "rex_state.lua")
 local turn_mod     = dofile(script_dir .. "rex_turn.lua")
 local provider_mod = dofile(script_dir .. "rex_provider.lua")
 
--- Initialize modules with their dependencies
-state_mod.init(json, script_dir)
-turn_mod.init(state_mod)
+-- Initialize modules with shared dependencies
+state_mod.set_script_dir(script_dir)
 provider_mod.init(json, state_mod)
+turn_mod.init(json, state_mod, provider_mod)
+
+-- Load modes.json and skills at startup
+state_mod.load_modes(json)
+state_mod.load_skills()
+state_mod.load_system_prompt()
+state_mod.load_config()
 
 -- ================================================================
--- Deferred history helpers
+-- Session-scoped history append helper
 -- ================================================================
 
---- Write a line to session-scoped Clink history via `clink history -s`.
+--- Append a line to Clink history using the session-scoped fallback.
 --- Used on the deferred onboarding path where rl.invokecommand("add-history")
 --- cannot be called because the buffer must stay intact through popup interaction.
 local function deferred_history_add(line)
     if not line or line == "" then return end
+    -- Resolve clink executable path
     local clink_exe = os.getenv("CLINK_EXE")
     if not clink_exe or clink_exe == "" then
+        -- Fallback: try "clink" on PATH
         clink_exe = "clink"
     end
-    local session = clink.getsession and clink.getsession() or ""
+    -- Get the current session ID
+    local session_id = ""
+    if clink and clink.getsession then
+        session_id = clink.getsession() or ""
+    end
+    -- Escape the line for cmd shell
     local escaped = line:gsub('"', '""')
-    local cmd = '"' .. clink_exe .. '" history -s'
-    if session and session ~= "" then
-        cmd = cmd .. " --session " .. session
+    local cmd
+    if session_id ~= "" then
+        cmd = '"' .. clink_exe .. '" history -s --session ' .. session_id .. ' add "' .. escaped .. '"'
+    else
+        cmd = '"' .. clink_exe .. '" history add "' .. escaped .. '"'
     end
-    cmd = cmd .. ' -- "' .. escaped .. '"'
-    os.execute(cmd .. " >nul 2>&1")
-end
-
---- Flush the deferred buffer: call beginoutput to preserve the typed text
---- on screen, then clear the rl_buffer, then write the saved line to history.
-local function flush_deferred(rl_buffer, saved_line)
-    rl_buffer:beginoutput()
-    rl_buffer:remove(1, rl_buffer:getlength() + 1)
-    deferred_history_add(saved_line)
+    os.execute(cmd .. " 2>nul")
 end
 
 -- ================================================================
--- Slash-command handlers
+-- Helpers
 -- ================================================================
 
+local function print_output(text)
+    if clink and clink.print then
+        clink.print(text)
+    else
+        print(text)
+    end
+end
+
+-- ================================================================
+-- Slash command handlers
+-- ================================================================
+
+--- /help — list available commands
 local function cmd_help()
-    clink.print("Rex commands (submit via Ctrl+Enter):")
-    clink.print("  /model    Select LLM model")
-    clink.print("  /mode     Select model mode")
-    clink.print("  /memory   Select conversation-memory window")
-    clink.print("  /context  Show current context sent to the LLM")
-    clink.print("  /help     List commands")
+    local lines = {
+        "Rex Commands:",
+        "",
+        "  /model     Select LLM model",
+        "  /mode      Select model mode",
+        "  /memory    Select conversation-memory window",
+        "  /settings  Show current settings",
+        "  /context   Show what context is sent to the LLM",
+        "  /help      Show this help",
+        "",
+        "Type any text and press Ctrl+Enter to send it to Rex.",
+        "Normal Enter executes commands in cmd.exe as usual.",
+    }
+    print_output(table.concat(lines, "\n"))
 end
 
+--- /settings — print effective settings
+local function cmd_settings()
+    local lines = {
+        "Rex Settings:",
+        "",
+        "  Credential: " .. (state_mod.resolve_credential() or "not set"),
+        "  Provider:   " .. (state_mod.resolve_provider() or "not set"),
+        "  Model:      " .. (state_mod.resolve_model() or "not set"),
+        "  Mode:       " .. (state_mod.resolve_mode() or "default"),
+        "  Memory:     " .. (state_mod.resolve_memory() or "all"),
+        "  Max tokens: " .. tostring(state_mod.resolve_max_tokens()),
+        "  Timeout:    " .. tostring(state_mod.resolve_timeout()) .. "s",
+    }
+    print_output(table.concat(lines, "\n"))
+end
+
+--- /context — show what context is being sent
 local function cmd_context()
-    local shell_auth = false
-    local sys = turn_mod.build_system_prompt(shell_auth)
-    clink.print("--- System Prompt ---")
-    clink.print(sys)
-    clink.print("")
-
-    local mem = state_mod.effective_memory()
-    local hist = state_mod.get_history()
-    local mem_msgs = state_mod.get_memory_messages()
-
-    clink.print("--- Memory Window: " .. mem .. " (" .. #mem_msgs .. " messages from "
-        .. #hist .. " stored) ---")
-    if #mem_msgs > 0 then
-        for i, msg in ipairs(mem_msgs) do
-            local preview = msg.content
-            if #preview > 100 then preview = preview:sub(1, 100) .. "..." end
-            clink.print("  [" .. i .. "] " .. msg.role .. ": " .. preview)
-        end
-    end
-
-    clink.print("")
-    clink.print("Model: " .. (state_mod.effective_model() or "not set"))
-    clink.print("Provider: " .. (state_mod.effective_provider() or "not set"))
-    clink.print("Mode: " .. state_mod.effective_mode())
-    clink.print("Memory: " .. mem)
-    clink.print("Max tokens: " .. state_mod.effective_max_tokens())
+    local display = turn_mod.format_context_display()
+    print_output(display)
 end
 
 -- ================================================================
--- Model selector popup
+-- Model selector — used by /model and onboarding
 -- ================================================================
 
-local function open_model_selector()
-    local creds, cred_err = provider_mod.ensure_credentials()
-    if not creds then
-        return nil, cred_err
-    end
+--- Fetch and merge models from all credentials.
+--- Returns items list, lookup table, or nil + error.
+local function build_model_selector()
+    local creds, err = provider_mod.ensure_credentials()
+    if not creds then return nil, nil, err end
 
-    local merged, fetch_err = provider_mod.fetch_all_models()
-    if not merged or #merged == 0 then
-        return nil, fetch_err or "No models available."
-    end
-
-    -- Build popup items with a lookup table mapping labels back to metadata
     local items = {}
     local lookup = {}
-    for _, m in ipairs(merged) do
-        local label = m.id .. "  [" .. m.credential .. "]"
-        items[#items + 1] = label
-        lookup[label] = m
+    local any_success = false
+
+    for _, cred in ipairs(creds) do
+        local models, fetch_err = provider_mod.fetch_models_cached(cred)
+        if models then
+            any_success = true
+            for _, m in ipairs(models) do
+                local label = m.id .. "  [" .. cred.id .. "]"
+                items[#items + 1] = label
+                lookup[label] = {
+                    id         = m.id,
+                    credential = cred.id,
+                    provider   = cred.provider,
+                }
+            end
+        end
+        -- Continue with other credentials even if one fails
+    end
+
+    if not any_success then
+        return nil, nil, "Failed to fetch models from all credentials."
+    end
+
+    if #items == 0 then
+        return nil, nil, "No models available from configured credentials."
+    end
+
+    return items, lookup
+end
+
+--- /model — select model via popup
+local function cmd_model()
+    local items, lookup, err = build_model_selector()
+    if not items then
+        print_output("Error: " .. (err or "Cannot build model list."))
+        return
     end
 
     local value = clink.popuplist("Select model", items)
     if not value or value == "" then
-        return nil  -- cancelled
+        -- Popup-only path: beginoutput before printing cancellation
+        if clink and clink.print then
+            -- Already past popup, safe to print
+        end
+        print_output("Cancelled.")
+        return
     end
 
     local selected = lookup[value]
     if not selected then
-        return nil, "Selection not found in model list."
+        print_output("Error: Selection not found in lookup.")
+        return
     end
 
-    return selected
+    -- Update session state (clears mode to default)
+    state_mod.set_model(selected.credential, selected.provider, selected.id)
+
+    -- Save to config
+    state_mod.save_current_config()
+
+    -- Print confirmation
+    local mode = state_mod.resolve_mode()
+    print_output("Model: " .. selected.id .. " on " .. selected.provider ..
+        " [" .. selected.credential .. "]. Mode: " .. mode .. ".")
 end
 
--- ================================================================
--- Mode selector popup
--- ================================================================
+--- /mode — select mode via popup
+local function cmd_mode()
+    local provider = state_mod.resolve_provider()
+    local model_id = state_mod.resolve_model()
 
-local function open_mode_selector(provider, model_id)
-    local modes = state_mod.resolve_modes(provider, model_id)
-    if #modes <= 1 then
-        return {id = "default", label = "Default", params = {}}, "only_default"
+    if not provider or not model_id then
+        print_output("No model selected. Use /model first.")
+        return
     end
 
-    local items = {}
-    local lookup = {}
+    local modes = state_mod.resolve_modes_for_model(provider, model_id)
+
+    -- Build items: always include "default" plus any modes from modes.json
+    local items = {"default"}
+    local mode_lookup = {["default"] = "default"}
+
     for _, m in ipairs(modes) do
-        items[#items + 1] = m.label
-        lookup[m.label] = m
+        if m.label and m.id then
+            items[#items + 1] = m.label
+            mode_lookup[m.label] = m.id
+        end
+    end
+
+    if #items <= 1 then
+        print_output("Only default mode available for " .. model_id .. ".")
+        return
     end
 
     local value = clink.popuplist("Select mode", items)
     if not value or value == "" then
-        return nil  -- cancelled
+        print_output("Cancelled.")
+        return
     end
 
-    local selected = lookup[value]
-    if not selected then
-        return nil, "Selection not found in mode list."
+    local mode_id = mode_lookup[value]
+    if not mode_id then
+        print_output("Error: Mode not found.")
+        return
     end
 
-    return selected
+    -- Set mode
+    state_mod.set_mode(mode_id)
+    state_mod.save_current_config()
+    print_output("Mode: " .. value .. ".")
 end
 
--- ================================================================
--- Memory selector popup
--- ================================================================
+--- /memory — select memory window via popup
+local function cmd_memory()
+    local items = {
+        "none",
+        "all",
+        "last answer",
+        "last question and answer",
+        "last 2 questions and answers",
+        "last 4 questions and answers",
+    }
 
--- Visible labels -> internal config values
-local memory_options = {
-    {label = "none",                           value = "none"},
-    {label = "all",                            value = "all"},
-    {label = "last answer",                    value = "last_answer"},
-    {label = "last question and answer",       value = "last_qa"},
-    {label = "last 2 questions and answers",   value = "last_2_qa"},
-    {label = "last 4 questions and answers",   value = "last_4_qa"},
-}
-
-local function open_memory_selector()
-    local items = {}
-    local lookup = {}
-    for _, opt in ipairs(memory_options) do
-        items[#items + 1] = opt.label
-        lookup[opt.label] = opt.value
-    end
+    local label_to_value = {
+        ["none"]                          = "none",
+        ["all"]                           = "all",
+        ["last answer"]                   = "last_answer",
+        ["last question and answer"]      = "last_qa",
+        ["last 2 questions and answers"]  = "last_2_qa",
+        ["last 4 questions and answers"]  = "last_4_qa",
+    }
 
     local value = clink.popuplist("Select memory window", items)
     if not value or value == "" then
-        return nil  -- cancelled
-    end
-
-    local internal = lookup[value]
-    if not internal then
-        return nil, "Selection not found."
-    end
-
-    return internal, value
-end
-
--- ================================================================
--- /model command
--- ================================================================
-
-local function handle_model_command(rl_buffer)
-    local selected, err = open_model_selector()
-    if not selected then
-        rl_buffer:beginoutput()
-        if err then
-            clink.print(err)
-        else
-            clink.print("Cancelled.")
-        end
+        print_output("Cancelled.")
         return
     end
 
-    -- Validated: update session state (clears mode to default)
-    state_mod.set_model(selected.credential, selected.provider, selected.id)
-
-    rl_buffer:beginoutput()
-    clink.print("Model: " .. selected.id .. " [" .. selected.credential .. "]. Mode: default.")
-end
-
--- ================================================================
--- /mode command
--- ================================================================
-
-local function handle_mode_command(rl_buffer)
-    local provider = state_mod.effective_provider()
-    local model_id = state_mod.effective_model()
-
-    if not provider or not model_id then
-        rl_buffer:beginoutput()
-        clink.print("No model selected. Use /model first.")
+    local mem_value = label_to_value[value]
+    if not mem_value then
+        print_output("Error: Unknown memory option.")
         return
     end
 
-    local selected, info = open_mode_selector(provider, model_id)
-    if info == "only_default" then
-        rl_buffer:beginoutput()
-        clink.print("Only the default mode is available for " .. model_id .. ".")
-        return
-    end
-    if not selected then
-        rl_buffer:beginoutput()
-        if info then
-            clink.print(info)
-        else
-            clink.print("Cancelled.")
-        end
-        return
-    end
-
-    -- Validated: update session mode
-    state_mod.set_mode(selected.id)
-
-    rl_buffer:beginoutput()
-    clink.print("Mode: " .. selected.label .. " (" .. selected.id .. ") for " .. model_id .. ".")
-end
-
--- ================================================================
--- /memory command
--- ================================================================
-
-local function handle_memory_command(rl_buffer)
-    local internal, label = open_memory_selector()
-    if not internal then
-        rl_buffer:beginoutput()
-        if label then
-            clink.print(label)
-        else
-            clink.print("Cancelled.")
-        end
-        return
-    end
-
-    -- Update session state
-    state_mod.set_memory(internal)
-
-    -- Persist to config file
-    state_mod.load_config()
-    local cfg = state_mod.get_state().config or {}
-    cfg.memory = internal
-    state_mod.save_config(cfg)
-
-    rl_buffer:beginoutput()
-    clink.print("Memory: " .. label .. ".")
+    state_mod.set_memory(mem_value)
+    state_mod.save_current_config()
+    print_output("Memory: " .. value .. ".")
 end
 
 -- ================================================================
 -- Onboarding flow
 -- ================================================================
 
---- Run the interactive onboarding sequence.
---- Returns (true, confirmation_message) on success,
----         (false, error_or_nil) on failure/cancellation.
---- rl_buffer is kept intact during popups; the caller handles flushing.
+--- Run the onboarding sequence. Returns true on success, false on cancel/error.
 local function run_onboarding()
-    -- Step 1: Parse credentials from live REX_API_KEY
-    local creds, cred_err = provider_mod.parse_credentials()
+    -- Step 1: Parse credentials
+    local creds, cred_err = provider_mod.ensure_credentials()
     if not creds then
-        return false, cred_err or "No valid API credentials. Set REX_API_KEY."
+        print_output("Error: " .. (cred_err or "No valid credentials."))
+        print_output("Set REX_API_KEY and try again.")
+        return false
     end
 
-    -- Step 2: Fetch models from all credentials
-    local merged, fetch_err = provider_mod.fetch_all_models()
-    if not merged or #merged == 0 then
-        return false, fetch_err or "Could not fetch any models."
+    -- Step 2: Fetch models
+    local items, lookup, fetch_err = build_model_selector()
+    if not items then
+        print_output("Error: " .. (fetch_err or "Cannot fetch models."))
+        return false
     end
 
     -- Step 3: Model selection popup
-    local items = {}
-    local lookup = {}
-    for _, m in ipairs(merged) do
-        local label = m.id .. "  [" .. m.credential .. "]"
-        items[#items + 1] = label
-        lookup[label] = m
-    end
-
     local value = clink.popuplist("Select model", items)
     if not value or value == "" then
-        return false, nil  -- user cancelled
+        print_output("Cancelled.")
+        return false
     end
 
     local selected = lookup[value]
     if not selected then
-        return false, "Selection not found."
+        print_output("Error: Selection not found.")
+        return false
     end
 
-    -- Step 4: Validated model (it exists in the fetched list)
+    -- Step 4: Validate model selection (skip full validation for speed; will fail at request time if broken)
+    -- Set tentative state
     state_mod.set_model(selected.credential, selected.provider, selected.id)
 
-    -- Step 5: Mode selection (if modes available beyond default)
-    local mode_id = "default"
-    local modes = state_mod.resolve_modes(selected.provider, selected.id)
-    if #modes > 1 then
-        local mode_items = {}
-        local mode_lookup = {}
-        for _, m in ipairs(modes) do
-            mode_items[#mode_items + 1] = m.label
-            mode_lookup[m.label] = m
-        end
+    -- Step 5: Mode selection
+    local resolved_mode = "default"
+    local modes = state_mod.resolve_modes_for_model(selected.provider, selected.id)
 
-        local mode_value = clink.popuplist("Select mode", mode_items)
-        if mode_value and mode_value ~= "" then
-            local mode_selected = mode_lookup[mode_value]
-            if mode_selected then
-                mode_id = mode_selected.id
+    if #modes > 0 then
+        -- Build mode items with default
+        local mode_items = {"default"}
+        local ml = {["default"] = "default"}
+        for _, m in ipairs(modes) do
+            if m.label and m.id then
+                mode_items[#mode_items + 1] = m.label
+                ml[m.label] = m.id
             end
         end
-        -- If mode cancelled, fall through with default
+
+        if #mode_items > 1 then
+            local mode_value = clink.popuplist("Select mode", mode_items)
+            if mode_value and mode_value ~= "" then
+                local mid = ml[mode_value]
+                if mid then
+                    state_mod.set_mode(mid)
+                    resolved_mode = mid
+                end
+            end
+            -- Escape from mode selection just uses default, not a cancel of onboarding
+        end
     end
 
-    -- Step 6: Set validated mode
-    state_mod.set_mode(mode_id)
+    -- Step 7: Save config
+    local ok, write_err = state_mod.save_current_config()
+    if not ok then
+        print_output("Warning: Could not save config: " .. (write_err or "unknown"))
+    end
 
-    -- Step 7: Save config with validated settings only
-    local cfg = {
-        credential = selected.credential,
-        provider   = selected.provider,
-        model      = selected.id,
-        mode       = mode_id,
-    }
-    state_mod.save_config(cfg)
+    -- Step 8: Print confirmation (always includes resolved mode)
+    print_output("Configured " .. selected.id .. " on " .. selected.provider ..
+        " [" .. selected.credential .. "]. Mode: " .. resolved_mode .. ".")
 
-    -- Step 8: Confirmation (always includes resolved mode, even if default)
-    local confirmation = "Configured " .. selected.id
-        .. " on " .. selected.provider
-        .. ". Mode: " .. mode_id .. "."
-
-    return true, confirmation
+    return true
 end
 
 -- ================================================================
--- LLM request execution
+-- Main turn processing
 -- ================================================================
 
---- Send a prompt to the LLM and handle the response.
---- The caller is responsible for writing the user-side history and recall
---- entry BEFORE calling this function, so that the user prompt is durably
---- persisted before the network call can fail.
----
---- Returns inject_command (string or nil) for session-mutating shell commands
---- that must be injected into the live interactive session via
---- rl_buffer:setbuffer() + rl.invokecommand("accept-line").
-local function send_to_llm(prompt)
-    -- Determine shell authorization for this turn
-    local shell_authorized = turn_mod.is_shell_authorized(prompt)
+--- Process a normal prompt (not a slash command).
+local function process_prompt(trimmed, rl_buffer)
+    -- Determine if this is a shell request
+    local is_shell_req = turn_mod.is_shell_request(trimmed)
+
+    -- Capture context
+    local ctx = turn_mod.capture_context()
 
     -- Build system prompt
-    local system_prompt = turn_mod.build_system_prompt(shell_authorized)
+    local system_prompt = turn_mod.build_system_prompt(ctx, is_shell_req)
 
-    -- Build messages: memory window + framed current prompt
-    local messages = state_mod.get_memory_messages()
-
-    -- Frame the current prompt with turn boundary marker
-    local framed = turn_mod.frame_user_prompt(prompt)
-    messages[#messages + 1] = {role = "user", content = framed}
+    -- Build messages with memory window
+    local messages = turn_mod.build_messages(trimmed)
 
     -- Send request
-    local mode_id = state_mod.effective_mode()
-    local response, err, err_type = provider_mod.send_request(system_prompt, messages, mode_id)
-
-    if not response then
-        local err_text
-        if err_type == "transient" then
-            local model_id = state_mod.effective_model() or "unknown model"
-            local provider = state_mod.effective_provider() or "Provider"
-            err_text = provider .. " is temporarily overloaded for " .. model_id
-                .. ". Try again in a moment."
-        else
-            err_text = "Error: " .. (err or "Unknown error")
-        end
-        clink.print(err_text)
-
-        -- Record error outcome immediately
-        state_mod.add_history("assistant", err_text)
-        state_mod.recall_append("error", err_text)
-        return nil
+    local raw_text, send_err = provider_mod.send_request(system_prompt, messages, {})
+    if not raw_text then
+        local err_msg = "Error: " .. (send_err or "Unknown request error.")
+        print_output(err_msg)
+        -- Record error in history and recall
+        state_mod.add_history("assistant", err_msg)
+        state_mod.append_recall("error", err_msg)
+        return
     end
 
-    -- Check for shell-command protocol before post-processing.
-    -- Only execute on turns where the user explicitly requested shell activity.
-    if shell_authorized then
-        local cmd_info = turn_mod.parse_shell_command(response)
-        if cmd_info then
-            -- Execute the shell command
-            local exec_result = turn_mod.execute_shell_command(cmd_info)
+    -- Process response
+    local processed, shell_cmd, proc_err = turn_mod.process_response(raw_text, is_shell_req, rl_buffer)
 
-            -- Format and print transcript
-            local transcript = turn_mod.format_shell_transcript(cmd_info, exec_result)
-            clink.print(transcript)
-
-            -- Store assistant side in history and recall
-            state_mod.add_history("assistant", transcript)
-            state_mod.recall_append("shell", transcript)
-
-            -- Return the inject command for session-mutating commands (cd, set,
-            -- pushd, popd) so the caller can apply the effect to the live
-            -- interactive cmd.exe session via rl_buffer + accept-line.
-            return exec_result.inject_command
-        end
+    if proc_err and (not processed or processed == "") then
+        local err_msg = "Error: " .. proc_err
+        print_output(err_msg)
+        state_mod.add_history("assistant", err_msg)
+        state_mod.append_recall("error", err_msg)
+        return
     end
 
-    -- Process and print normal response
-    local clean = response
-    if not shell_authorized then
-        -- Strip any erroneously included shell-command blocks on non-shell turns
-        clean = turn_mod.strip_shell_command(clean)
+    -- Print the result
+    if processed and processed ~= "" then
+        print_output(processed)
     end
 
-    local output = turn_mod.process_response(clean)
-    if not output or output == "" then
-        -- Host-side post-processing emptied the response; this is a local
-        -- empty-output condition, not a provider-level "missing content" error.
-        output = "(Empty response from model.)"
+    -- Record in history and recall
+    if shell_cmd then
+        -- Shell transcript
+        local record = processed or "(shell command executed)"
+        state_mod.add_history("assistant", record)
+        state_mod.append_recall("shell", record)
+    else
+        -- Normal response
+        local record = processed or raw_text
+        state_mod.add_history("assistant", record)
+        state_mod.append_recall("assistant", record)
     end
-    clink.print(output)
-
-    -- Store assistant side in history and recall
-    state_mod.add_history("assistant", response)
-    state_mod.recall_append("assistant", response)
-    return nil
 end
 
 -- ================================================================
--- Main entry point -- rex_submit (must be global for luafunc: binding)
+-- rex_submit — the global function bound to Ctrl+Enter
 -- ================================================================
 
+-- Must be global for Clink's luafunc: binding to find it.
 function rex_submit(rl_buffer)
     local line = rl_buffer:getbuffer()
     local trimmed = line:match("^%s*(.-)%s*$")
@@ -474,127 +424,97 @@ function rex_submit(rl_buffer)
     -- Ignore empty input
     if not trimmed or trimmed == "" then return end
 
-    -- Classify the input to determine the execution path BEFORE touching
-    -- the buffer, so we choose the correct history and clearing strategy.
-    local is_slash = trimmed:sub(1, 1) == "/"
-    local is_popup_slash = (trimmed == "/model") or (trimmed == "/mode") or (trimmed == "/memory")
-    -- Non-popup slash commands (/help, /context, unknown /foo) always use the
-    -- print path regardless of model state; they never trigger onboarding.
-    local is_print_slash = is_slash and not is_popup_slash
-    -- Onboarding is only triggered by non-slash normal prompts when no model
-    -- is configured.  Slash commands handle their own prerequisites.
-    local needs_onboarding = not is_slash and not state_mod.has_model()
+    -- Determine the execution path
+    local is_popup_only = (trimmed == "/model") or (trimmed == "/mode") or (trimmed == "/memory")
+    local needs_onboarding = not state_mod.resolve_model()
 
-    -- ----------------------------------------------------------------
-    -- Path selection: choose the correct history and clearing strategy
-    -- ----------------------------------------------------------------
-
-    if is_popup_slash then
-        -- POPUP-ONLY PATH: add-history records the slash command and clears
-        -- the edit line without beginoutput, so no phantom prompt appears
-        -- before the popup.
-        rl.invokecommand("add-history")
-
-    elseif is_print_slash or not needs_onboarding then
-        -- PRINT PATH: beginoutput first (preserves typed text on screen),
-        -- then add-history (appends to shell history and clears edit line).
-        -- Covers normal prompts with a model configured AND non-popup slash
-        -- commands like /help, /context, unknown /foo.
+    if not is_popup_only and not needs_onboarding then
+        -- ============================================================
+        -- PRINT PATH: normal prompt, /help, /settings, /context, errors
+        -- ============================================================
+        -- beginoutput() preserves the typed text on screen, then
+        -- add-history records it in shell history and clears the buffer.
         rl_buffer:beginoutput()
         rl.invokecommand("add-history")
 
-    else
-        -- POPUP-THEN-PRINT PATH (onboarding): keep rl_buffer intact through
-        -- popup interaction.  Save the trimmed line separately; the caller
-        -- will flush with beginoutput + remove + deferred history later.
-    end
+        -- Record user entry in history and recall immediately
+        if not trimmed:match("^/") then
+            state_mod.add_history("user", trimmed)
+            state_mod.append_recall("user", trimmed)
+        end
 
-    -- ----------------------------------------------------------------
-    -- Slash command dispatch
-    -- ----------------------------------------------------------------
-
-    if is_slash then
-        local cmd = trimmed:lower()
-
-        if cmd == "/help" then
+        -- Dispatch
+        if trimmed == "/help" then
             cmd_help()
-        elseif cmd == "/context" then
+        elseif trimmed == "/settings" then
+            cmd_settings()
+        elseif trimmed == "/context" then
             cmd_context()
-        elseif cmd == "/model" then
-            handle_model_command(rl_buffer)
-        elseif cmd == "/mode" then
-            handle_mode_command(rl_buffer)
-        elseif cmd == "/memory" then
-            handle_memory_command(rl_buffer)
+        elseif trimmed:match("^/") then
+            -- Unrecognized slash command
+            print_output("Unknown command: " .. trimmed .. ". Type /help for available commands.")
         else
-            clink.print("Unknown command: " .. trimmed .. ". Type /help for available commands.")
-        end
-        return
-    end
-
-    -- ----------------------------------------------------------------
-    -- Onboarding (if needed)
-    -- ----------------------------------------------------------------
-
-    if needs_onboarding then
-        -- Append user entry to recall immediately so it is durably persisted
-        -- before onboarding popups or network calls can fail.
-        state_mod.recall_append("user", trimmed)
-
-        local ok, msg = run_onboarding()
-
-        -- Flush deferred buffer: preserve typed text, clear buffer, write
-        -- the saved line to session-scoped Clink history.
-        flush_deferred(rl_buffer, trimmed)
-
-        if not ok then
-            if msg then
-                clink.print(msg)
-                state_mod.recall_append("cancel", msg)
-            else
-                clink.print("Cancelled.")
-                state_mod.recall_append("cancel", "Onboarding cancelled by user.")
-            end
-            return
+            process_prompt(trimmed, rl_buffer)
         end
 
-        -- Print onboarding confirmation (always includes the resolved mode)
-        clink.print(msg)
-        clink.print("")
+    elseif is_popup_only then
+        -- ============================================================
+        -- POPUP-ONLY PATH: /model, /mode, /memory
+        -- ============================================================
+        -- add-history without beginoutput() to avoid phantom prompt.
+        rl.invokecommand("add-history")
 
-        -- Fall through to process the original prompt
-    end
+        -- Run the popup command. Confirmation printing happens inside
+        -- each handler; they call beginoutput() before their first print
+        -- implicitly through clink.print().
+        if trimmed == "/model" then
+            cmd_model()
+        elseif trimmed == "/mode" then
+            cmd_mode()
+        elseif trimmed == "/memory" then
+            cmd_memory()
+        end
 
-    -- ----------------------------------------------------------------
-    -- Send prompt to LLM
-    -- ----------------------------------------------------------------
+    else
+        -- ============================================================
+        -- POPUP-THEN-PRINT PATH: onboarding triggered by a normal prompt
+        -- ============================================================
+        -- Do NOT call beginoutput() or add-history yet.
+        -- Keep rl_buffer intact through popup interaction.
+        -- Save the trimmed line for deferred history append.
+        local saved_line = trimmed
 
-    -- Write user-side history and recall BEFORE the LLM call so the
-    -- prompt is durably persisted even if the network call fails.
-    -- On the onboarding path, recall was already written above.
-    if not needs_onboarding then
-        state_mod.recall_append("user", trimmed)
-    end
-    state_mod.add_history("user", trimmed)
+        -- Record user entry to recall immediately — before onboarding
+        -- can fail, so the prompt is durably persisted.
+        state_mod.add_history("user", saved_line)
+        state_mod.append_recall("user", saved_line)
 
-    local inject = send_to_llm(trimmed)
+        -- Run onboarding
+        local onboarding_ok = run_onboarding()
 
-    -- For session-mutating shell commands (cd, set, pushd, popd), inject the
-    -- command into the live interactive cmd.exe session so the effect persists
-    -- into the next prompt.  rl_buffer:setbuffer() replaces the buffer content
-    -- and rl.invokecommand("accept-line") causes readline to return the
-    -- injected command to cmd.exe for execution when rex_submit returns.
-    if inject then
-        rl_buffer:setbuffer(inject)
-        rl.invokecommand("accept-line")
+        -- Now flush: beginoutput() preserves the original prompt on screen,
+        -- then remove() clears the edit buffer for the next prompt.
+        rl_buffer:beginoutput()
+        rl_buffer:remove(1, rl_buffer:getlength() + 1)
+
+        -- Append the saved line to shell history via session-scoped fallback
+        deferred_history_add(saved_line)
+
+        if onboarding_ok then
+            -- Process the original prompt
+            process_prompt(saved_line, rl_buffer)
+        else
+            -- Onboarding failed or was cancelled — record in recall
+            state_mod.append_recall("cancel", "Onboarding cancelled or failed.")
+        end
     end
 end
 
 -- ================================================================
--- Key binding registration
+-- Key bindings
 -- ================================================================
 
--- Primary: Clink's xterm modified-key format (modifier 5 = Ctrl, keycode 13 = Enter)
+-- Primary: Clink xterm modified-key format (modifier 5 = Ctrl, keycode 13 = Enter)
 rl.setbinding([["\e[27;5;13~"]], [["luafunc:rex_submit"]])
 -- Fallback: CSI u encoding for terminals that send it natively
 rl.setbinding([["\e[13;5u"]], [["luafunc:rex_submit"]])

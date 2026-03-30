@@ -25,7 +25,7 @@ Rex is a Clink Lua plugin whose entrypoint is `rex.lua` and whose implementation
 - **Data-driven model metadata**: Model modes (e.g., extended thinking, reasoning effort) and optional per-model capability flags (e.g., web search) are defined in a `modes.json` data file — not hardcoded in plugin code — so they can be updated without changing the plugin.
 - **Persistent configuration**: An XDG-compliant, self-documenting config file stores user preferences across sessions. Auto-created during onboarding.
 - **Durable recall transcript**: Every Rex instance creates its own append-only session file under the recall configuration folder and flushes user/assistant turn data immediately as it becomes available.
-- **Slash commands**: `/model`, `/mode`, `/help`, etc. — submitted via Ctrl+Enter like any other Rex input.
+- **Slash commands**: `/model`, `/mode`, `/settings`, `/help`, etc. — submitted via Ctrl+Enter like any other Rex input.
 
 ### Workflow
 
@@ -67,7 +67,7 @@ This means there is no separate "active" or "inactive" state. Rex is always avai
 Rex input handling must preserve normal shell recall behavior:
 
 - Every non-empty line submitted via Ctrl+Enter is appended to Clink shell history exactly once for the active Clink session.
-- This includes both normal prompts and slash commands such as `/model` or `/context`.
+- This includes both normal prompts and slash commands such as `/model`, `/context`, or `/settings`.
 - The literal text the user typed is what gets stored. Rex must not store the framed prompt, synthetic helper messages, shell-command protocol blocks, or assistant responses in shell history.
 - Rex must use the history mechanism that matches the execution path:
   - Immediate print path and popup-only path: call `rl.invokecommand("add-history")` while the submitted text is still present in `rl_buffer`. On the print path, `beginoutput()` must happen first so the line remains visible on screen before `add-history` clears it.
@@ -77,6 +77,7 @@ Rex input handling must preserve normal shell recall behavior:
 - Acceptance test: after submitting `2+2` with Ctrl+Enter, the next prompt's Up arrow recalls `2+2` just as if the line had been submitted with normal Enter.
 - Acceptance test: after invoking `/model` with Ctrl+Enter and cancelling the popup, the next prompt's Up arrow recalls `/model`.
 - Acceptance test: after invoking `/memory` with Ctrl+Enter and cancelling the popup, the next prompt's Up arrow recalls `/memory`.
+- Acceptance test: after invoking `/settings` with Ctrl+Enter, the next prompt's Up arrow recalls `/settings`.
 - Acceptance test: after first-run onboarding triggered by `2+2`, the next prompt's Up arrow recalls `2+2` whether onboarding completes or is cancelled.
 
 ## Configuration
@@ -170,6 +171,8 @@ Settings are resolved in this order (highest to lowest priority):
 2. **Config file** — values from the config file
 3. **Built-in defaults** — hardcoded fallback values
 
+`/settings` reports the effective values after this resolution order is applied; it is not a raw dump of the config file.
+
 ### Memory Window Values
 
 The `memory` setting controls how much prior conversation Rex includes in the next API request. The current prompt is always included separately as the newest user message; the `memory` setting only affects earlier stored conversation.
@@ -199,6 +202,7 @@ When input submitted via Ctrl+Enter starts with `/`, it is handled as a built-in
 | `/model`     | Select LLM model via popup list across all configured credentials |
 | `/mode`      | Select model mode via popup list                      |
 | `/memory`    | Select conversation-memory window for future API requests |
+| `/settings`  | Print the effective current Rex settings                 |
 | `/context`   | Show what context is being sent to the LLM, including the effective memory window |
 | `/help`      | List available commands                                |
 
@@ -297,6 +301,14 @@ Selecting a model clears the previous model's explicit mode selection and falls 
    - Print a plain-text confirmation such as `Memory: last 2 questions and answers.`
 4. Pressing Escape leaves the current setting unchanged and prints a short visible cancellation line.
 5. `/memory` changes only how much prior conversation is included in future API requests. It does not delete, truncate, or rewrite stored conversation history.
+
+### `/settings`
+
+1. Print the effective current Rex settings as plain text and return. There is no popup, no LLM request, no model-catalog fetch, and no config mutation.
+2. The printed values must reflect normal runtime resolution: session-state overrides first, then config-file values, then built-in defaults.
+3. At minimum, print `credential`, `provider`, `model`, `mode`, `memory`, `max_tokens`, and `timeout`.
+4. If a value is currently unset, unavailable, or not yet derived, show that explicitly with a short placeholder such as `not set`.
+5. `/settings` must work even before onboarding is complete. It is informational only and must not force onboarding just to print unresolved fields.
 
 Unrecognized `/` commands print a plain-text error.
 
@@ -584,7 +596,7 @@ Popup interaction adds a second constraint: `/model`, `/mode`, `/memory`, and on
 
 The rules are therefore:
 
-1. **Print path** (LLM response, `/help`, `/context`, errors): call `beginoutput()` first, then `rl.invokecommand("add-history")`. `add-history` records the submitted line and clears the edit buffer in one step.
+1. **Print path** (LLM response, `/help`, `/settings`, `/context`, errors): call `beginoutput()` first, then `rl.invokecommand("add-history")`. `add-history` records the submitted line and clears the edit buffer in one step.
 2. **Popup-only path** (`/model`, `/mode`, `/memory`): call `rl.invokecommand("add-history")` without `beginoutput()`. This records the slash command and clears the edit line without creating a phantom prompt before the popup.
 3. **Popup-then-print path** (startup onboarding triggered by a normal prompt): do **not** call `beginoutput()` and do **not** call `add-history` before the popup, because `add-history` would clear the buffer too early. Keep the original line in `rl_buffer`, save the trimmed line separately, and after popup interaction finishes call deferred `beginoutput()` first, then `remove()`, then append the saved line via session-scoped `clink history -s`.
 
@@ -1106,6 +1118,10 @@ HTTP requests are made by spawning `curl` via `io.popen()`. The plugin:
 
 A timeout (configurable, default 120s) is enforced via `curl --max-time`. The temp file approach is essential — constructing the JSON body inline in a `cmd.exe` command string would require escaping double quotes, backslashes, and special characters, which is fragile and error-prone.
 
+The temp-file naming step is part of the transport contract, not a throwaway implementation detail. Rex may use clocks, random numbers, counters, or similar entropy to make `%TEMP%\rex_*.json` unique, but any non-string value must be converted explicitly before string-only operations are applied. Temp-file construction must not fail with a host-side Lua type error before `curl` starts.
+
+Acceptance test: a normal prompt and an explicit shell request such as `list all files in this directory larger than 5kB` must both be able to reach `curl` invocation without crashing during temp-file path construction.
+
 ### Error Handling
 
 All error conditions produce a plain-text error message:
@@ -1373,6 +1389,17 @@ Even with explicit system prompt instructions to avoid markdown, LLMs routinely 
 ### Don't pass JSON body inline in the curl command
 
 On Windows `cmd.exe`, embedding a JSON body in the curl command string requires escaping double quotes, backslashes, and special characters — a fragile process that breaks on complex prompts. Write the body to a temp file and use `curl -d @tempfile`. This avoids all shell-escaping issues.
+
+### Don't call string methods on numeric temp-file components
+
+The attached failure shape is:
+
+- Rex prepares a POST request body for the provider API.
+- The implementation builds the `%TEMP%\rex_*.json` filename using a numeric entropy source such as `os.clock()`.
+- The code then applies a string method directly to that numeric value, for example `:gsub(...)`.
+- Rex crashes before `curl` runs with a Lua error such as `attempt to index a number value`.
+
+That behavior is incorrect. Temp-file generation is host transport plumbing and must be robust for every request path that writes a JSON body. If Rex uses numeric entropy sources, it must stringify or format them explicitly before any string-only operation. A user prompt must never be consumed by a provider-request setup crash.
 
 ### Don't use vertical lines in tables (rex_skills.md)
 

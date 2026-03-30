@@ -1,8 +1,8 @@
 # Rex
 
-A Clink Lua script that turns the cmd.exe command line into an LLM prompt interface. Type input at your normal shell prompt, press **Ctrl+Enter** to send it to the AI. Normal **Enter** works exactly as before — cmd.exe processes the input. Rex has zero visible presence in the terminal.
+A Clink Lua plugin that turns the cmd.exe command line into an LLM prompt interface. Type input at your normal shell prompt, press **Ctrl+Enter** to send it to the AI. Normal **Enter** works exactly as before — cmd.exe processes the input. Rex has zero persistent terminal chrome of its own.
 
-Supports Anthropic, OpenAI, Groq, and xAI — auto-detected from your API key.
+Supports Anthropic, OpenAI, GitHub Models / Copilot, Groq, and xAI.
 
 ## Install
 
@@ -15,7 +15,7 @@ clink installscripts c:\repos\config\clink\rex
 Set your API key (add to your shell startup or environment variables):
 
 ```
-set REX_API_KEY=sk-ant-...
+set REX_API_KEY=anthropic:sk-ant-...,github:ghp_...,openai:sk-...
 ```
 
 ### Requirements
@@ -27,7 +27,10 @@ set REX_API_KEY=sk-ant-...
 
 | File | Purpose |
 |------|---------|
-| `rex.lua` | All plugin logic |
+| `rex.lua` | Clink entrypoint, key binding, slash-command dispatch, onboarding |
+| `rex_state.lua` | Durable/session state, config, recall transcript, modes/skills loading |
+| `rex_turn.lua` | Turn-scoped prompt framing, shell protocol, output shaping |
+| `rex_provider.lua` | Credentials, model discovery, HTTP transport, retries |
 | `json.lua` | Bundled JSON encoder/decoder |
 | `modes.json` | Provider-aware model modes and capability flags |
 | `rex_skills.md` | LLM system prompt — terminal rendering capabilities |
@@ -48,9 +51,11 @@ Config file location: `%USERPROFILE%/.config/rex/config.toml` (or `$XDG_CONFIG_H
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `provider` | *(auto-detected)* | `anthropic`, `openai`, `groq`, `xai` |
+| `credential` | *(from onboarding)* | Selected `REX_API_KEY` entry label |
+| `provider` | *(from onboarding)* | `anthropic`, `openai`, `github`, `groq`, `xai` |
 | `model` | *(from onboarding)* | Model ID |
 | `mode` | `"default"` | Mode ID |
+| `memory` | `"all"` | Conversation-memory window |
 | `max_tokens` | `4096` | Max response tokens |
 | `timeout` | `120` | HTTP timeout (seconds) |
 
@@ -62,7 +67,7 @@ Slash commands are submitted via **Ctrl+Enter**, same as prompts.
 |---------|--------|
 | `/model` | Select model via popup list |
 | `/mode` | Select mode (e.g., thinking, reasoning effort) |
-| `/clear` | Clear conversation history |
+| `/memory` | Select the conversation-memory window |
 | `/context` | Show current context sent to the LLM |
 | `/help` | List commands |
 
@@ -70,6 +75,7 @@ Slash commands are submitted via **Ctrl+Enter**, same as prompts.
 
 | Prefix | Provider |
 |--------|----------|
+| `github:` | GitHub Models / Copilot |
 | `sk-ant-` | Anthropic |
 | `sk-` | OpenAI |
 | `gsk_` | Groq |

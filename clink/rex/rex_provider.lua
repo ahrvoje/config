@@ -1,657 +1,790 @@
--- rex_provider.lua -- Credentials, provider registry, model discovery,
+-- rex_provider.lua — Credentials, provider registry, model discovery,
 -- HTTP transport, request execution, retry/error classification.
 --
--- Owns: parsing REX_API_KEY credentials, provider metadata (endpoints, auth,
--- filters), model-list fetching, request-body assembly per provider,
--- HTTP calls via curl, response extraction, retry policy, error classification,
--- web-search tool resolution.
--- Does NOT own: durable state, config I/O, prompt framing, ANSI rendering.
-
-local json       -- injected via init()
-local state_mod  -- injected via init()
+-- Owns: parsing REX_API_KEY, provider metadata, model-list fetching,
+-- request-body assembly, HTTP calls via curl, response extraction,
+-- retry policy, and request-time error classification.
 
 local M = {}
 
-function M.init(json_mod, state_module)
+-- Dependencies injected by rex.lua at load time
+local json = nil
+local state_mod = nil
+
+function M.init(json_mod, st)
     json = json_mod
-    state_mod = state_module
+    state_mod = st
 end
 
 -- ================================================================
 -- Provider registry
 -- ================================================================
 
-local providers = {
+local PROVIDERS = {
     anthropic = {
-        base_url     = "https://api.anthropic.com",
-        models_path  = "/v1/models",
-        chat_path    = "/v1/messages",
-        auth_type    = "x-api-key",
-        filter       = function(id) return id:find("^claude%-") ~= nil end,
+        base_url      = "https://api.anthropic.com",
+        chat_endpoint = "/v1/messages",
+        list_endpoint = "/v1/models",
+        auth_style    = "anthropic",
     },
     openai = {
-        base_url     = "https://api.openai.com",
-        models_path  = "/v1/models",
-        chat_path    = "/v1/chat/completions",
-        auth_type    = "bearer",
-        filter       = function(id) return id:find("^gpt%-") ~= nil or id:find("^o") ~= nil end,
+        base_url      = "https://api.openai.com",
+        chat_endpoint = "/v1/chat/completions",
+        list_endpoint = "/v1/models",
+        auth_style    = "bearer",
     },
     github = {
-        base_url     = "https://models.github.ai",
-        models_path  = "/catalog/models",
-        chat_path    = "/inference/chat/completions",
-        auth_type    = "bearer-github",
-        -- GitHub filter runs on full catalog entry objects, not bare ID strings.
-        -- Includes entries that support text input and text output.
-        filter       = function(entry)
-            if type(entry) ~= "table" then return false end
-            local inp = entry.supported_input_modalities or {}
-            local out = entry.supported_output_modalities or {}
-            local has_text_in, has_text_out = false, false
-            for _, v in ipairs(inp) do if v == "text" then has_text_in = true end end
-            for _, v in ipairs(out) do if v == "text" then has_text_out = true end end
-            return has_text_in and has_text_out
-        end,
+        base_url      = "https://models.github.ai",
+        chat_endpoint = "/inference/chat/completions",
+        list_endpoint = "/catalog/models",
+        auth_style    = "github",
     },
     groq = {
-        base_url     = "https://api.groq.com/openai",
-        models_path  = "/v1/models",
-        chat_path    = "/v1/chat/completions",
-        auth_type    = "bearer",
-        filter       = function() return true end,
+        base_url      = "https://api.groq.com/openai",
+        chat_endpoint = "/v1/chat/completions",
+        list_endpoint = "/v1/models",
+        auth_style    = "bearer",
     },
     xai = {
-        base_url     = "https://api.x.ai",
-        models_path  = "/v1/models",
-        chat_path    = "/v1/chat/completions",
-        auth_type    = "bearer",
-        filter       = function(id) return id:find("^grok%-") ~= nil end,
+        base_url      = "https://api.x.ai",
+        chat_endpoint = "/v1/chat/completions",
+        list_endpoint = "/v1/models",
+        auth_style    = "bearer",
     },
 }
 
-function M.get_provider_info(name)
-    return providers[name]
+function M.get_provider_info(provider_name)
+    return PROVIDERS[provider_name]
 end
 
 -- ================================================================
--- Credential parsing
+-- Credential parsing from REX_API_KEY
 -- ================================================================
 
---- Parse REX_API_KEY into an array of credential entries.
---- Each entry: {id, provider, key}
-function M.parse_credentials()
-    local raw = os.getenv("REX_API_KEY")
-    if not raw or raw == "" then
-        return nil, "REX_API_KEY is not set."
-    end
-
-    local creds = {}
-    local idx = 0
-    for entry in raw:gmatch("[^,]+") do
-        entry = entry:match("^%s*(.-)%s*$")
-        if entry ~= "" then
-            idx = idx + 1
-            local cred = M._parse_single_credential(entry, idx)
-            if cred then
-                creds[#creds + 1] = cred
-            end
-        end
-    end
-
-    if #creds == 0 then
-        return nil, "No valid credentials found in REX_API_KEY."
-    end
-
-    state_mod.set_credentials(creds)
-    return creds
-end
-
-function M._parse_single_credential(entry, idx)
-    local label, rest
-
-    -- Check for label=provider:key format
-    label, rest = entry:match("^([%w_%-]+)=(.+)$")
-    if not label then
-        rest = entry
-    end
-
-    -- Check for provider:key format
-    local provider_tag, key = rest:match("^(%w+):(.+)$")
-
-    if provider_tag then
-        local prov = provider_tag:lower()
-        if not providers[prov] then
-            clink.print("Warning: unknown provider '" .. prov .. "' in REX_API_KEY entry, skipping.")
-            return nil
-        end
-        local id = label or (prov .. "-" .. idx)
-        return {id = id, provider = prov, key = key}
-    end
-
-    -- Auto-detect from key pattern
-    key = rest
-    local prov = M._detect_provider(key)
-    if not prov then
-        clink.print("Warning: could not detect provider for REX_API_KEY entry, skipping.")
-        return nil
-    end
-    local id = label or (prov .. "-" .. idx)
-    return {id = id, provider = prov, key = key}
-end
-
-function M._detect_provider(key)
-    if key:find("^sk%-ant%-") then return "anthropic" end
-    if key:find("^gsk_")     then return "groq" end
-    if key:find("^xai%-")    then return "xai" end
-    if key:find("^sk%-")     then return "openai" end
+--- Auto-detect provider from a raw API key by prefix pattern.
+local function detect_provider(raw_key)
+    if raw_key:match("^sk%-ant%-") then return "anthropic" end
+    if raw_key:match("^gsk_") then return "groq" end
+    if raw_key:match("^xai%-") then return "xai" end
+    if raw_key:match("^sk%-") then return "openai" end
+    -- Cannot auto-detect; caller must handle
     return nil
 end
 
--- ================================================================
--- Credential resolution
--- ================================================================
-
---- Ensure credentials are parsed from the live REX_API_KEY.
---- Returns the credentials array, parsing on demand if the cache is empty.
---- This is the critical path that prevents "No valid credential found"
---- when REX_API_KEY is set but the in-memory cache hasn't been populated.
-function M.ensure_credentials()
-    local creds = state_mod.get_credentials()
-    if creds and #creds > 0 then
-        return creds
+--- Parse REX_API_KEY into a list of credential entries.
+--- Each entry: {id, provider, key}
+function M.parse_credentials(api_key_str)
+    if not api_key_str or api_key_str == "" then
+        return nil, "REX_API_KEY is not set"
     end
-    return M.parse_credentials()
+
+    local credentials = {}
+    local idx = 0
+
+    for entry in api_key_str:gmatch("[^,]+") do
+        entry = entry:match("^%s*(.-)%s*$") -- trim
+        if entry ~= "" then
+            idx = idx + 1
+            local label, rest = entry:match("^([%w_%-]+)=(.+)$")
+            local provider, key
+
+            if label and rest then
+                -- label=provider:key format
+                provider, key = rest:match("^(%w+):(.+)$")
+                if not provider then
+                    -- label=key — try auto-detect
+                    key = rest
+                    provider = detect_provider(key)
+                end
+            else
+                -- provider:key or raw-key
+                provider, key = entry:match("^(%w+):(.+)$")
+                if provider and not PROVIDERS[provider] then
+                    -- Not a known provider prefix, treat entire thing as raw key
+                    key = entry
+                    provider = detect_provider(key)
+                end
+                if not key then
+                    key = entry
+                    provider = detect_provider(key)
+                end
+                label = provider and (provider .. "-" .. idx) or ("key-" .. idx)
+            end
+
+            if provider and key and PROVIDERS[provider] then
+                credentials[#credentials + 1] = {
+                    id       = label,
+                    provider = provider,
+                    key      = key,
+                }
+            end
+            -- Skip unrecognized entries silently
+        end
+    end
+
+    if #credentials == 0 then
+        return nil, "No valid credentials found in REX_API_KEY"
+    end
+    return credentials
 end
 
---- Get a credential by ID from the current in-memory cache.
-function M.get_credential(cred_id)
-    local creds = state_mod.get_credentials()
-    if not creds then return nil end
-    for _, c in ipairs(creds) do
+--- Ensure credentials are parsed from the live environment.
+--- Returns the credential list or nil + error.
+function M.ensure_credentials()
+    local st = state_mod.get_state()
+
+    -- Always re-read from environment to catch changes
+    local api_key = os.getenv("REX_API_KEY")
+    if not api_key or api_key == "" then
+        st.credentials = nil
+        return nil, "REX_API_KEY environment variable is not set."
+    end
+
+    local creds, err = M.parse_credentials(api_key)
+    if not creds then
+        st.credentials = nil
+        return nil, err
+    end
+
+    st.credentials = creds
+    return creds
+end
+
+--- Find a credential entry by ID from the current parsed list.
+function M.find_credential(cred_id)
+    local st = state_mod.get_state()
+    if not st.credentials then
+        M.ensure_credentials()
+    end
+    if not st.credentials then return nil end
+    for _, c in ipairs(st.credentials) do
         if c.id == cred_id then return c end
     end
     return nil
 end
 
---- Resolve the credential for the current effective selection.
---- Always ensures credentials are parsed from the live environment first.
-function M.resolve_credential()
+--- Resolve the active credential for making a request.
+--- Uses session -> config -> first available.
+function M.resolve_active_credential()
     local creds, err = M.ensure_credentials()
-    if not creds or #creds == 0 then
-        return nil, err
+    if not creds then return nil, nil, err end
+
+    -- Try session/config credential ID
+    local cred_id = state_mod.resolve_credential()
+    if cred_id then
+        for _, c in ipairs(creds) do
+            if c.id == cred_id then return c, nil, nil end
+        end
+        -- Configured credential not found in current env
+        -- Try to find one matching the configured provider+model
+        local cfg_provider = state_mod.resolve_provider()
+        if cfg_provider then
+            for _, c in ipairs(creds) do
+                if c.provider == cfg_provider then return c, nil, nil end
+            end
+        end
+        return nil, nil, 'Configured credential "' .. cred_id ..
+            '" is not present in current REX_API_KEY. Use /model or update REX_API_KEY.'
     end
 
-    local eff_cred = state_mod.effective_credential()
-    if eff_cred then
-        local c = M.get_credential(eff_cred)
-        if c then return c end
-        -- Configured credential not found in current REX_API_KEY
-        return nil, 'Configured credential "' .. eff_cred
-            .. '" is not present in current REX_API_KEY. Use /model or update REX_API_KEY.'
-    end
-
-    -- Fallback: first credential
-    return creds[1]
+    -- No configured credential, use first available
+    return creds[1], nil, nil
 end
 
 -- ================================================================
--- Model listing
+-- HTTP transport via curl
 -- ================================================================
 
---- Fetch models from a single credential's provider API.
---- Returns an array of {id, credential, provider} or nil + error.
-function M.fetch_models(cred)
-    if not cred then return nil, "No credential" end
+local function build_auth_headers(provider_name, api_key)
+    local prov = PROVIDERS[provider_name]
+    if not prov then return {} end
 
-    local cached = state_mod.get_cached_models(cred.id)
-    if cached then return cached end
+    if prov.auth_style == "anthropic" then
+        return {
+            "x-api-key: " .. api_key,
+            "anthropic-version: 2023-06-01",
+            "content-type: application/json",
+        }
+    elseif prov.auth_style == "github" then
+        return {
+            "Authorization: Bearer " .. api_key,
+            "Accept: application/vnd.github+json",
+            "X-GitHub-Api-Version: 2026-03-10",
+            "content-type: application/json",
+        }
+    else
+        -- bearer auth (openai, groq, xai)
+        return {
+            "Authorization: Bearer " .. api_key,
+            "content-type: application/json",
+        }
+    end
+end
 
-    local prov = providers[cred.provider]
-    if not prov then return nil, "Unknown provider: " .. (cred.provider or "nil") end
-
-    local url = prov.base_url .. prov.models_path
-    local headers = M._build_auth_headers(cred)
-
-    if cred.provider == "github" then
-        headers[#headers + 1] = {name = "Accept", value = "application/vnd.github+json"}
-        headers[#headers + 1] = {name = "X-GitHub-Api-Version", value = "2026-03-10"}
+local function build_temp_json_path()
+    local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "."
+    temp_dir = temp_dir:gsub("[/\\]+$", "")
+    if temp_dir == "" then
+        temp_dir = "."
     end
 
-    local body, err = M._http_get(url, headers)
-    if not body then return nil, err end
+    -- Keep temp-file generation type-safe: os.clock() is numeric in Lua.
+    local clock_component = tostring(os.clock()):gsub("[^%d]", "")
+    if clock_component == "" then
+        clock_component = "0"
+    end
 
-    local data, parse_err = json.decode(body)
-    if not data then return nil, "JSON parse error: " .. (parse_err or "unknown") end
+    return temp_dir .. "\\rex_" .. clock_component .. "_" .. math.random(10000, 99999) .. ".json"
+end
 
-    local models = {}
+--- Execute an HTTP request via curl.
+--- Returns parsed JSON response, HTTP status, or nil + error.
+function M.http_request(method, url, headers, body_str, timeout)
+    timeout = timeout or 120
 
-    if cred.provider == "github" then
-        -- GitHub returns a top-level array of catalog entries
-        if type(data) ~= "table" then
-            return nil, "Unexpected GitHub model response format"
+    -- Write body to temp file to avoid shell-escaping issues
+    local temp_file = build_temp_json_path()
+
+    if body_str then
+        local f = io.open(temp_file, "w")
+        if not f then return nil, "Cannot write temp file" end
+        f:write(body_str)
+        f:close()
+    end
+
+    -- Build curl command
+    local parts = {"curl", "-s", "-S", "--max-time", tostring(timeout)}
+
+    if method == "POST" then
+        parts[#parts + 1] = "-X"
+        parts[#parts + 1] = "POST"
+    end
+
+    for _, h in ipairs(headers or {}) do
+        parts[#parts + 1] = "-H"
+        parts[#parts + 1] = '"' .. h .. '"'
+    end
+
+    if body_str then
+        parts[#parts + 1] = "-d"
+        parts[#parts + 1] = '"@' .. temp_file .. '"'
+    end
+
+    parts[#parts + 1] = '"' .. url .. '"'
+
+    local cmd = table.concat(parts, " ")
+    local pipe = io.popen(cmd .. " 2>&1", "r")
+    if not pipe then
+        if body_str then os.remove(temp_file) end
+        return nil, "Failed to execute curl"
+    end
+
+    local response = pipe:read("*a")
+    pipe:close()
+
+    -- Clean up temp file
+    if body_str then os.remove(temp_file) end
+
+    if not response or response == "" then
+        return nil, "Empty response from curl"
+    end
+
+    -- Check for curl errors (non-JSON responses starting with "curl:")
+    if response:match("^curl:") or response:match("^curl %(") then
+        return nil, "Network error: " .. response:match("^(.-)[\r\n]") or response
+    end
+
+    -- Parse JSON
+    local parsed, parse_err = json.decode(response)
+    if not parsed then
+        return nil, "Failed to parse response: " .. tostring(parse_err)
+    end
+
+    return parsed
+end
+
+-- ================================================================
+-- Model listing / discovery
+-- ================================================================
+
+--- Model filter functions per provider.
+local model_filters = {
+    anthropic = function(model)
+        return model.id and model.id:match("^claude%-")
+    end,
+    openai = function(model)
+        return model.id and (model.id:match("^gpt%-") or model.id:match("^o"))
+    end,
+    github = function(model)
+        -- Include catalog entries that support text input and text output
+        local has_text_in = false
+        local has_text_out = false
+        if model.supported_input_modalities then
+            for _, m in ipairs(model.supported_input_modalities) do
+                if m == "text" then has_text_in = true; break end
+            end
         end
-        for _, entry in ipairs(data) do
-            if type(entry) == "table" and prov.filter(entry) then
-                local model_id = entry.id or entry.name
-                if model_id then
-                    models[#models + 1] = {
-                        id = model_id,
-                        credential = cred.id,
-                        provider = cred.provider,
-                    }
-                end
+        if model.supported_output_modalities then
+            for _, m in ipairs(model.supported_output_modalities) do
+                if m == "text" then has_text_out = true; break end
+            end
+        end
+        return has_text_in and has_text_out
+    end,
+    groq = function(_model)
+        return true -- include all
+    end,
+    xai = function(model)
+        return model.id and model.id:match("^grok%-")
+    end,
+}
+
+--- Fetch model list for a given credential.
+--- Returns a list of {id, name} or nil + error.
+function M.fetch_models(credential)
+    if not credential then return nil, "No credential" end
+
+    local prov = PROVIDERS[credential.provider]
+    if not prov then return nil, "Unknown provider: " .. tostring(credential.provider) end
+
+    local url = prov.base_url .. prov.list_endpoint
+    local headers = build_auth_headers(credential.provider, credential.key)
+
+    local response, err = M.http_request("GET", url, headers, nil, 30)
+    if not response then return nil, err end
+
+    -- Extract model list based on provider response format
+    local raw_models
+    if credential.provider == "github" then
+        -- GitHub returns a top-level JSON array
+        if type(response) == "table" then
+            -- Could be an array directly or have a wrapping structure
+            if response[1] then
+                raw_models = response
+            elseif response.data then
+                raw_models = response.data
+            else
+                -- Try the response itself as-is
+                raw_models = response
             end
         end
     else
-        -- Standard {data: [...]} format (Anthropic, OpenAI, Groq, xAI)
-        local items = data.data
-        if not items or type(items) ~= "table" then
-            return nil, "Unexpected model response format"
-        end
-        for _, item in ipairs(items) do
-            if type(item) == "table" and item.id then
-                if prov.filter(item.id) then
-                    models[#models + 1] = {
-                        id = item.id,
-                        credential = cred.id,
-                        provider = cred.provider,
-                    }
-                end
-            end
+        -- Anthropic, OpenAI, Groq, xAI return {data: [...]}
+        if type(response) == "table" and response.data then
+            raw_models = response.data
         end
     end
 
+    if not raw_models or type(raw_models) ~= "table" then
+        -- Check for error in response
+        if response.error then
+            local msg = response.error
+            if type(msg) == "table" then msg = msg.message or json.encode(msg) end
+            return nil, tostring(msg)
+        end
+        return nil, "Unexpected model list response shape"
+    end
+
+    -- Apply filter and build clean list
+    local filter = model_filters[credential.provider] or function() return true end
+    local models = {}
+    for _, m in ipairs(raw_models) do
+        if type(m) == "table" and m.id and filter(m) then
+            models[#models + 1] = {
+                id   = m.id,
+                name = m.name or m.id,
+            }
+        end
+    end
+
+    -- Sort alphabetically by id
     table.sort(models, function(a, b) return a.id < b.id end)
-    state_mod.set_cached_models(cred.id, models)
+
     return models
 end
 
---- Fetch models from all configured credentials, merge into one sorted list.
-function M.fetch_all_models()
-    local creds, cred_err = M.ensure_credentials()
-    if not creds or #creds == 0 then
-        return nil, cred_err or "No credentials configured."
+--- Fetch models for a credential, with caching.
+function M.fetch_models_cached(credential)
+    if not credential then return nil, "No credential" end
+    local cached = state_mod.get_model_cache(credential.id)
+    if cached then return cached end
+
+    local models, err = M.fetch_models(credential)
+    if models then
+        state_mod.set_model_cache(credential.id, models)
     end
-
-    local merged = {}
-    local errors = {}
-    local any_ok = false
-
-    for _, cred in ipairs(creds) do
-        local models, err = M.fetch_models(cred)
-        if models then
-            for _, m in ipairs(models) do
-                merged[#merged + 1] = m
-            end
-            any_ok = true
-        else
-            errors[cred.id] = err
-        end
-    end
-
-    if not any_ok then
-        return nil, "Failed to fetch models from all credentials."
-    end
-
-    return merged, errors
-end
-
--- ================================================================
--- HTTP transport
--- ================================================================
-
-function M._build_auth_headers(cred)
-    local headers = {}
-    local prov = providers[cred.provider]
-    if not prov then return headers end
-
-    if prov.auth_type == "x-api-key" then
-        headers[#headers + 1] = {name = "x-api-key", value = cred.key}
-        headers[#headers + 1] = {name = "anthropic-version", value = "2023-06-01"}
-    elseif prov.auth_type == "bearer" then
-        headers[#headers + 1] = {name = "Authorization", value = "Bearer " .. cred.key}
-    elseif prov.auth_type == "bearer-github" then
-        headers[#headers + 1] = {name = "Authorization", value = "Bearer " .. cred.key}
-        headers[#headers + 1] = {name = "Accept", value = "application/vnd.github+json"}
-        headers[#headers + 1] = {name = "X-GitHub-Api-Version", value = "2026-03-10"}
-    end
-    return headers
-end
-
-function M._headers_to_curl_args(headers)
-    local args = {}
-    for _, h in ipairs(headers) do
-        args[#args + 1] = '-H "' .. h.name .. ": " .. h.value .. '"'
-    end
-    return table.concat(args, " ")
-end
-
---- HTTP GET request via curl.
-function M._http_get(url, headers, timeout)
-    timeout = timeout or 30
-    local header_args = M._headers_to_curl_args(headers)
-    local cmd = 'curl -s --max-time ' .. timeout .. ' ' .. header_args .. ' "' .. url .. '"'
-    local pipe = io.popen(cmd .. " 2>nul")
-    if not pipe then return nil, "Failed to execute curl" end
-    local body = pipe:read("*a")
-    pipe:close()
-    if not body or body == "" then
-        return nil, "Empty response from " .. url
-    end
-    return body
-end
-
---- HTTP POST request via curl, using a temp file for the body to
---- avoid shell-escaping issues on Windows.
-function M._http_post(url, headers, body_str, timeout)
-    timeout = timeout or 120
-
-    local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "."
-    local temp_path = temp_dir .. "\\rex_" .. os.time() .. "_" .. math.random(10000, 99999) .. ".json"
-    local tf = io.open(temp_path, "w")
-    if not tf then return nil, "Failed to write temp file" end
-    tf:write(body_str)
-    tf:close()
-
-    local header_args = M._headers_to_curl_args(headers)
-    local cmd = 'curl -s --max-time ' .. timeout .. ' -X POST '
-        .. header_args
-        .. ' -H "Content-Type: application/json"'
-        .. ' -d @"' .. temp_path .. '"'
-        .. ' "' .. url .. '"'
-
-    local pipe = io.popen(cmd .. " 2>nul")
-    local response = ""
-    if pipe then
-        response = pipe:read("*a") or ""
-        pipe:close()
-    end
-
-    os.remove(temp_path)
-
-    if response == "" then
-        return nil, "Empty response from API"
-    end
-    return response
+    return models, err
 end
 
 -- ================================================================
 -- Request body assembly
 -- ================================================================
 
---- Build the request body table for a given provider.
-function M.build_request_body(provider, model_id, messages, system_prompt, mode_params, tools)
-    local max_tokens = state_mod.effective_max_tokens()
-    local body = {}
-
-    if provider == "anthropic" then
-        body.model = model_id
-        body.max_tokens = max_tokens
-        body.system = system_prompt
-        body.messages = messages
-        if tools and #tools > 0 then
-            body.tools = tools
-        end
-    else
-        -- OpenAI-compatible: openai, github, groq, xai
-        body.model = model_id
-        body.max_tokens = max_tokens
-        local all_msgs = {{role = "system", content = system_prompt}}
-        for _, m in ipairs(messages) do
-            all_msgs[#all_msgs + 1] = m
-        end
-        body.messages = all_msgs
-        if tools and #tools > 0 then
-            body.tools = tools
-        end
-    end
-
-    -- Deep-merge mode params into the request body
-    if mode_params then
-        M._deep_merge(body, mode_params)
-    end
-
-    return body
-end
-
---- Deep-merge src into dst (modifies dst in place).
-function M._deep_merge(dst, src)
-    for k, v in pairs(src) do
-        if type(v) == "table" and type(dst[k]) == "table" then
-            M._deep_merge(dst[k], v)
-        else
-            dst[k] = v
-        end
-    end
-end
-
--- ================================================================
--- Web search tool resolution
--- ================================================================
-
---- Determine whether to attach web-search tools for the current request.
---- Conservative: only attaches when model-level and endpoint-level support
---- are both confirmed.  Returns an array of tool definitions, or nil.
-function M.resolve_web_search_tools(provider, credential_id, model_id)
-    -- Session-level denial (from a prior unsupported-tool error)
-    if state_mod.is_web_search_denied(provider, credential_id, model_id) then
-        return nil
-    end
-
+--- Build the web search tool definition if appropriate.
+local function build_web_search_tool(provider, credential_id, model_id)
+    -- Check modes.json capabilities
     local caps = state_mod.resolve_capabilities(provider, model_id)
 
-    -- Explicit false or omitted (unknown) -> no web search
-    if caps.web_search ~= true then
+    -- If explicitly false, omit
+    if caps.web_search == false then return nil end
+
+    -- If not explicitly true, omit (conservative default)
+    if caps.web_search ~= true then return nil end
+
+    -- Check session-level rejection
+    if state_mod.is_web_search_rejected(provider, credential_id, model_id) then
         return nil
     end
 
-    -- Check endpoint family support
+    -- Only Anthropic and OpenAI endpoint families support web search
     if provider == "anthropic" then
-        return {{type = "web_search_20250305", name = "web_search"}}
+        return {type = "web_search_20250305", name = "web_search"}
     elseif provider == "openai" then
-        return {{type = "web_search_preview"}}
+        return {type = "web_search_preview"}
     end
 
-    -- GitHub, Groq, xAI: no web search support at the endpoint level
+    -- GitHub, Groq, xAI: no web search tool support
     return nil
 end
 
--- ================================================================
--- Request execution with retry
--- ================================================================
+--- Deep-merge mode params into a base table.
+local function deep_merge(base, overlay)
+    if type(overlay) ~= "table" then return end
+    for k, v in pairs(overlay) do
+        if type(v) == "table" and type(base[k]) == "table" then
+            deep_merge(base[k], v)
+        else
+            base[k] = v
+        end
+    end
+end
 
---- Send a chat request and return the extracted text response.
---- Returns (text, nil) on success, (nil, error_msg, error_type) on failure.
---- Retries transient failures with bounded backoff.
-function M.send_request(system_prompt, messages, mode_id)
-    local provider = state_mod.effective_provider()
-    local model_id = state_mod.effective_model()
+--- Build the complete API request body.
+--- Returns body_table, provider_name, or nil + error.
+function M.build_request(system_prompt, messages, provider, model_id, mode_id, max_tokens)
+    local prov = PROVIDERS[provider]
+    if not prov then return nil, "Unknown provider: " .. tostring(provider) end
 
-    if not provider or not model_id then
-        return nil, "No model configured. Use /model to select one."
+    max_tokens = max_tokens or 4096
+
+    local body
+
+    if provider == "anthropic" then
+        body = {
+            model      = model_id,
+            max_tokens = max_tokens,
+            system     = system_prompt,
+            messages   = messages,
+        }
+    else
+        -- OpenAI-compatible: openai, github, groq, xai
+        local msgs = {}
+        msgs[1] = {role = "system", content = system_prompt}
+        for _, m in ipairs(messages) do
+            msgs[#msgs + 1] = {role = m.role, content = m.content}
+        end
+        body = {
+            model      = model_id,
+            max_tokens = max_tokens,
+            messages   = msgs,
+        }
     end
 
-    -- Resolve credential from live environment -- never fail without checking
-    local cred, cred_err = M.resolve_credential()
-    if not cred then
-        return nil, cred_err or "No valid credential found."
-    end
-
-    local prov = providers[cred.provider]
-    if not prov then
-        return nil, "Unknown provider: " .. cred.provider
-    end
-
-    -- Resolve mode params from modes.json
-    local mode_params = nil
+    -- Apply mode params if not default
     if mode_id and mode_id ~= "default" then
-        local modes = state_mod.resolve_modes(provider, model_id)
+        local modes = state_mod.resolve_modes_for_model(provider, model_id)
         for _, m in ipairs(modes) do
-            if m.id == mode_id then
-                mode_params = m.params
+            if m.id == mode_id and m.params then
+                deep_merge(body, m.params)
                 break
             end
         end
     end
 
-    -- Resolve web search tools
-    local tools = M.resolve_web_search_tools(provider, cred.id, model_id)
-
-    local body = M.build_request_body(provider, model_id, messages, system_prompt, mode_params, tools)
-    local body_str = json.encode(body)
-    if not body_str then
-        return nil, "Failed to encode request body."
+    -- Add web search tool if supported
+    local cred_id = state_mod.resolve_credential()
+    local ws_tool = build_web_search_tool(provider, cred_id, model_id)
+    if ws_tool then
+        body.tools = {ws_tool}
     end
 
-    local url = prov.base_url .. prov.chat_path
-    local headers = M._build_auth_headers(cred)
-    local timeout = state_mod.effective_timeout()
-
-    -- Send with retry for transient failures
-    local max_retries = 3
-    local backoff = 2
-
-    for attempt = 1, max_retries do
-        local response, http_err = M._http_post(url, headers, body_str, timeout)
-        if not response then
-            if attempt < max_retries then
-                -- Use ping as a portable sleep on Windows
-                os.execute("ping -n " .. (backoff + 1) .. " 127.0.0.1 >nul 2>&1")
-                backoff = backoff * 2
-            else
-                return nil, "Network error: " .. (http_err or "unknown")
-            end
-        else
-            local data, parse_err = json.decode(response)
-            if not data then
-                return nil, "Failed to parse API response."
-            end
-
-            local err_type, err_msg = M._classify_error(data, provider)
-
-            if err_type == "transient" then
-                if attempt < max_retries then
-                    os.execute("ping -n " .. (backoff + 1) .. " 127.0.0.1 >nul 2>&1")
-                    backoff = backoff * 2
-                else
-                    return nil, err_msg, "transient"
-                end
-
-            elseif err_type == "unsupported_tool" then
-                -- Retry once without web search tools
-                state_mod.deny_web_search(provider, cred.id, model_id)
-                body.tools = nil
-                body_str = json.encode(body)
-                local resp2, err2 = M._http_post(url, headers, body_str, timeout)
-                if not resp2 then
-                    return nil, "Network error on retry: " .. (err2 or "unknown")
-                end
-                local data2 = json.decode(resp2)
-                if not data2 then
-                    return nil, "Failed to parse API response on retry."
-                end
-                local err_type2, err_msg2 = M._classify_error(data2, provider)
-                if err_type2 then
-                    return nil, err_msg2, err_type2
-                end
-                return M._extract_response(data2, provider)
-
-            elseif err_type then
-                return nil, err_msg, err_type
-            end
-
-            return M._extract_response(data, provider)
-        end
-    end
-
-    return nil, "Request failed after retries."
-end
-
--- ================================================================
--- Error classification
--- ================================================================
-
---- Classify an API error response.
---- Returns (error_type, message) or (nil, nil) if no error detected.
-function M._classify_error(data, provider)
-    if not data then return "invalid", "Empty response" end
-
-    if provider == "anthropic" then
-        if data.error then
-            local err = data.error
-            local msg = err.message or "Unknown error"
-            local etype = err.type or ""
-
-            if etype == "overloaded_error" or etype == "rate_limit_error" then
-                return "transient", msg
-            end
-            if msg:find("does not support tool types") then
-                return "unsupported_tool", msg
-            end
-            if msg:find("web_search") and msg:find("tool") then
-                return "unsupported_tool", msg
-            end
-            return "invalid", msg
-        end
-    else
-        -- OpenAI-compatible error format (openai, github, groq, xai)
-        if data.error then
-            local err = data.error
-            local msg = type(err) == "table" and (err.message or "Unknown error") or tostring(err)
-            local code = type(err) == "table" and err.code or nil
-
-            if code == "rate_limit_exceeded" or code == "server_error"
-                or msg:find("overloaded") or msg:find("rate limit")
-                or msg:find("503") or msg:find("529") then
-                return "transient", msg
-            end
-            if msg:find("tool") and (msg:find("unsupported") or msg:find("not supported")) then
-                return "unsupported_tool", msg
-            end
-            return "invalid", msg
-        end
-    end
-
-    return nil, nil
+    return body
 end
 
 -- ================================================================
 -- Response extraction
 -- ================================================================
 
---- Extract the assistant text from a successful API response.
---- Provider-level "missing content" is reported only when the parsed
---- response truly lacks usable text in that provider's documented fields.
-function M._extract_response(data, provider)
-    if not data then return nil, "Empty response data" end
+--- Extract assistant text from a provider response.
+--- Returns text or nil + error.
+function M.extract_response(provider, response)
+    if not response then return nil, "No response" end
+
+    -- Check for API-level error
+    if response.error then
+        local msg = response.error
+        if type(msg) == "table" then
+            msg = msg.message or json.encode(msg) or "Unknown error"
+        end
+        return nil, tostring(msg)
+    end
 
     if provider == "anthropic" then
-        local content = data.content
-        if not content or type(content) ~= "table" then
-            return nil, "No content in Anthropic response"
-        end
-        local parts = {}
-        for _, block in ipairs(content) do
-            if type(block) == "table" and block.type == "text" and block.text then
-                parts[#parts + 1] = block.text
+        -- response.content[] — concatenate all text blocks
+        if response.content and type(response.content) == "table" then
+            local parts = {}
+            for _, block in ipairs(response.content) do
+                if type(block) == "table" and block.type == "text" and block.text then
+                    parts[#parts + 1] = block.text
+                end
+            end
+            if #parts > 0 then
+                return table.concat(parts)
             end
         end
-        if #parts == 0 then
-            return nil, "No text content in Anthropic response"
-        end
-        return table.concat(parts)
+        -- Truly no content in Anthropic response
+        return nil, "No content in Anthropic response"
     else
-        -- OpenAI-compatible: response.choices[0].message.content
-        local choices = data.choices
-        if not choices or type(choices) ~= "table" or #choices == 0 then
-            return nil, "No choices in response"
+        -- OpenAI-compatible: choices[0].message.content
+        if response.choices and type(response.choices) == "table" then
+            local first = response.choices[1]
+            if first and first.message and first.message.content then
+                return first.message.content
+            end
         end
-        local msg = choices[1].message
-        if not msg or not msg.content then
-            return nil, "No message content in response"
-        end
-        return msg.content
+        return nil, "No content in " .. (provider or "unknown") .. " response"
     end
+end
+
+-- ================================================================
+-- Error classification
+-- ================================================================
+
+--- Classify an error as transient (retryable) or permanent.
+--- Returns "transient" or "permanent".
+function M.classify_error(response, err_msg)
+    if not response and err_msg then
+        -- Check for timeout or network errors
+        if err_msg:match("timed? ?out") or err_msg:match("curl") then
+            return "transient"
+        end
+        return "permanent"
+    end
+
+    if type(response) == "table" then
+        -- Check for transient HTTP error patterns
+        local err = response.error
+        if type(err) == "table" then
+            local etype = err.type or ""
+            local emsg = err.message or ""
+            -- Anthropic overloaded
+            if etype:match("[Oo]verloaded") or emsg:match("[Oo]verloaded") then
+                return "transient"
+            end
+            -- Rate limit
+            if etype:match("rate_limit") or emsg:match("rate.limit") then
+                return "transient"
+            end
+            -- Unsupported tool — this is a permanent error for this tool config
+            if emsg:match("does not support tool") or emsg:match("unsupported.*tool") then
+                return "permanent_tool"
+            end
+            -- Unsupported mode/param
+            if emsg:match("unsupported") or emsg:match("not supported") or
+               emsg:match("invalid.*param") or emsg:match("Field required") then
+                return "permanent"
+            end
+        end
+
+        -- Check HTTP status via response shape
+        if response.status then
+            local s = tonumber(response.status)
+            if s == 429 or s == 503 or s == 529 then
+                return "transient"
+            end
+        end
+    end
+
+    -- Default to permanent for unrecognized errors
+    if err_msg then
+        if err_msg:match("429") or err_msg:match("503") or err_msg:match("529") or
+           err_msg:match("[Oo]verloaded") or err_msg:match("rate.limit") then
+            return "transient"
+        end
+    end
+
+    return "permanent"
+end
+
+-- ================================================================
+-- Request execution with retry
+-- ================================================================
+
+--- Send a chat request to the API with retry for transient errors.
+--- Returns extracted text or nil + error.
+function M.send_request(system_prompt, messages, options)
+    options = options or {}
+    local provider = options.provider or state_mod.resolve_provider()
+    local model_id = options.model or state_mod.resolve_model()
+    local mode_id  = options.mode or state_mod.resolve_mode()
+    local max_tokens = options.max_tokens or state_mod.resolve_max_tokens()
+    local timeout  = options.timeout or state_mod.resolve_timeout()
+
+    if not provider then return nil, "No provider configured. Use /model to select one." end
+    if not model_id then return nil, "No model configured. Use /model to select one." end
+
+    -- Resolve credential for this request
+    local cred, _, cred_err = M.resolve_active_credential()
+    if not cred then return nil, cred_err end
+
+    -- Build request body
+    local body, build_err = M.build_request(system_prompt, messages, provider, model_id, mode_id, max_tokens)
+    if not body then return nil, build_err end
+
+    local prov = PROVIDERS[provider]
+    local url = prov.base_url .. prov.chat_endpoint
+    local headers = build_auth_headers(provider, cred.key)
+
+    local body_str = json.encode(body)
+    if not body_str then return nil, "Failed to encode request body" end
+
+    -- Retry loop for transient errors
+    local max_retries = 3
+    local last_err = nil
+    for attempt = 1, max_retries do
+        local response, http_err = M.http_request("POST", url, headers, body_str, timeout)
+
+        if http_err then
+            last_err = http_err
+            local class = M.classify_error(nil, http_err)
+            if class == "transient" and attempt < max_retries then
+                -- Short backoff: 1s, 2s
+                local wait_cmd = "ping -n " .. (attempt + 1) .. " 127.0.0.1 >nul 2>&1"
+                os.execute(wait_cmd)
+            else
+                return nil, http_err
+            end
+        elseif response then
+            local text, extract_err = M.extract_response(provider, response)
+            if text then
+                return text
+            end
+
+            -- Check if this is a tool-rejection error
+            local class = M.classify_error(response, extract_err)
+            if class == "permanent_tool" then
+                -- Retry without web search tool
+                state_mod.mark_web_search_rejected(provider, cred.id, model_id)
+                body.tools = nil
+                body_str = json.encode(body)
+                -- Immediate single retry without the tool
+                local resp2, err2 = M.http_request("POST", url, headers, body_str, timeout)
+                if err2 then return nil, err2 end
+                if resp2 then
+                    local t2, e2 = M.extract_response(provider, resp2)
+                    if t2 then return t2 end
+                    return nil, e2
+                end
+                return nil, extract_err
+            elseif class == "transient" and attempt < max_retries then
+                last_err = extract_err
+                local wait_cmd = "ping -n " .. (attempt + 1) .. " 127.0.0.1 >nul 2>&1"
+                os.execute(wait_cmd)
+            else
+                return nil, extract_err
+            end
+        end
+    end
+
+    -- Build a user-friendly transient error message
+    if last_err then
+        local model_display = model_id or "unknown model"
+        local provider_display = provider or "Unknown provider"
+        if last_err:match("[Oo]verloaded") or last_err:match("rate") or
+           last_err:match("429") or last_err:match("503") then
+            return nil, provider_display .. " is temporarily overloaded for " ..
+                model_display .. ". Try again in a moment."
+        end
+    end
+
+    return nil, last_err or "Request failed after retries"
+end
+
+-- ================================================================
+-- Model validation
+-- ================================================================
+
+--- Validate a model selection by making a minimal test request.
+--- Returns true on success, false + error on failure.
+function M.validate_model(credential, model_id, mode_id)
+    if not credential then return false, "No credential" end
+
+    local provider = credential.provider
+    local prov = PROVIDERS[provider]
+    if not prov then return false, "Unknown provider" end
+
+    -- Build a minimal request
+    local body
+    if provider == "anthropic" then
+        body = {
+            model      = model_id,
+            max_tokens = 1,
+            system     = "Reply with OK.",
+            messages   = {{role = "user", content = "ping"}},
+        }
+    else
+        body = {
+            model      = model_id,
+            max_tokens = 1,
+            messages   = {
+                {role = "system", content = "Reply with OK."},
+                {role = "user", content = "ping"},
+            },
+        }
+    end
+
+    -- Apply mode params if not default
+    if mode_id and mode_id ~= "default" then
+        local modes = state_mod.resolve_modes_for_model(provider, model_id)
+        for _, m in ipairs(modes) do
+            if m.id == mode_id and m.params then
+                deep_merge(body, m.params)
+                break
+            end
+        end
+    end
+
+    local url = prov.base_url .. prov.chat_endpoint
+    local headers = build_auth_headers(provider, credential.key)
+    local body_str = json.encode(body)
+    if not body_str then return false, "Encode error" end
+
+    local response, http_err = M.http_request("POST", url, headers, body_str, 15)
+    if http_err then
+        local class = M.classify_error(nil, http_err)
+        if class == "transient" then
+            -- Transient errors do not invalidate the selection
+            return true
+        end
+        return false, http_err
+    end
+
+    if not response then return false, "No response" end
+
+    -- Check for API-level error
+    if response.error then
+        local msg = response.error
+        if type(msg) == "table" then
+            msg = msg.message or json.encode(msg) or "Unknown error"
+        end
+        local class = M.classify_error(response, tostring(msg))
+        if class == "transient" then
+            return true -- Transient: selection is fine
+        end
+        return false, tostring(msg)
+    end
+
+    return true
 end
 
 return M
