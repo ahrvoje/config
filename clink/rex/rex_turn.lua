@@ -129,48 +129,47 @@ end
 -- System prompt composition
 -- ================================================================
 
+local function render_prompt_template(template, values)
+    if not template or template == "" then return nil end
+    return (template:gsub("{{([%w_]+)}}", function(key)
+        local value = values and values[key]
+        if value == nil then
+            return ""
+        end
+        return tostring(value)
+    end))
+end
+
 --- Build the complete system prompt for the API request.
 function M.build_system_prompt(ctx, is_shell_req)
     local parts = {}
 
     -- 1. Base instruction
-    parts[#parts + 1] = "You are Rex, a concise terminal AI assistant running inside cmd.exe with Clink. " ..
-        "Output is printed directly via clink.print(). " ..
-        "Use \\e[ notation for ANSI sequences; the host converts it to real ESC bytes. " ..
-        "Be concise, lead with the answer, and never wrap the whole response in markdown code fences, " ..
-        "backticks, or a decorative outer box."
+    local base = state_mod.get_skill_section("system_base")
+    if base and base ~= "" then
+        parts[#parts + 1] = base
+    end
 
     -- 2. Turn-framing block
-    parts[#parts + 1] = "Earlier conversation in this request is background only. " ..
-        "Answer the newest user message now. " ..
-        "Carry forward earlier topics only when the newest message clearly depends on them " ..
-        "(e.g., 'above', 'continue', 'same units', 'same file', 'again'). " ..
-        "If the newest turn is independent, prefer a focused answer over revisiting stale topics."
+    local turn = state_mod.get_skill_section("system_turn")
+    if turn and turn ~= "" then
+        parts[#parts + 1] = turn
+    end
 
     -- 3. Shell-capability block
-    if is_shell_req then
-        parts[#parts + 1] = "The newest user message is an explicit shell request. " ..
-            "You may emit exactly one Rex shell-command block to execute in the live shell. " ..
-            "The host will execute the command, capture output, and print the transcript. " ..
-            "Prefer shell=cmd unless the user explicitly asks for PowerShell."
-    else
-        parts[#parts + 1] = "Rex can execute shell commands when the user explicitly asks. " ..
-            "The current request is not a shell request, so answer normally without the shell-command block."
+    local shell_section = is_shell_req and "system_shell_request" or "system_non_shell"
+    local shell_text = state_mod.get_skill_section(shell_section)
+    if shell_text and shell_text ~= "" then
+        parts[#parts + 1] = shell_text
     end
 
     -- 4. Skills block
-    local skills = state_mod.get_skills()
+    local skills = state_mod.get_skill_section("shared_guidance") or state_mod.get_skills()
     if skills then
         parts[#parts + 1] = skills
     end
 
-    -- 5. System prompt (runtime contract)
-    local sys = state_mod.get_system_prompt()
-    if sys then
-        parts[#parts + 1] = sys
-    end
-
-    -- 6. Context block
+    -- 5. Context block
     local ctx_lines = {"## Current Environment"}
     if ctx.cwd then
         ctx_lines[#ctx_lines + 1] = "- Working directory: " .. ctx.cwd
@@ -198,10 +197,13 @@ end
 
 --- Frame the current user prompt with turn-boundary markers.
 function M.frame_prompt(user_text)
-    return "Current request (answer this now):\n" ..
-        user_text .. "\n\n" ..
-        "Previous conversation in this request is background only.\n" ..
-        "Use it only if the current request clearly depends on it."
+    local template = state_mod.get_skill_section("user_turn_template")
+    if template and template ~= "" then
+        return render_prompt_template(template, {
+            USER_TEXT = user_text or "",
+        })
+    end
+    return user_text or ""
 end
 
 -- ================================================================
@@ -438,10 +440,34 @@ end
 -- ================================================================
 
 --- Convert literal escape notations to real ESC bytes.
---- Handles \e[, \033[, and \x1b[ notations.
+--- Handles \e[, \033[, \x1b[, and some malformed bare [..m SGR markers.
 function M.render_ansi(text)
     if not text then return text end
     local ESC = string.char(27)
+
+    -- Some model outputs drop the leading \e and leave bare SGR markers
+    -- like [1;34m... [0m or [1ma[0m. Repair them before normal handling,
+    -- but only when the text does not already contain explicit escapes.
+    local has_explicit_escape =
+        text:find(ESC, 1, true) or
+        text:find("\\e%[") or
+        text:find("\\033%[") or
+        text:find("\\x1b%[")
+
+    local bare_sgr_count = 0
+    if not has_explicit_escape then
+        for _ in text:gmatch("%[[0-9;]+m") do
+            bare_sgr_count = bare_sgr_count + 1
+            if bare_sgr_count >= 2 then
+                break
+            end
+        end
+    end
+
+    if not has_explicit_escape and bare_sgr_count >= 2 then
+        text = text:gsub("%[([0-9;]+)m", ESC .. "[%1m")
+    end
+
     -- \e[ notation
     text = text:gsub("\\e%[", ESC .. "[")
     -- \e] for OSC sequences
@@ -530,47 +556,84 @@ end
 -- Context display for /context command
 -- ================================================================
 
---- Build a display string showing what context is being sent to the LLM.
-function M.format_context_display()
-    local lines = {}
+local function append_block(lines, text, prefix)
+    prefix = prefix or ""
+    text = text or ""
 
-    lines[#lines + 1] = "Rex Context:"
-    lines[#lines + 1] = ""
+    if text == "" then
+        lines[#lines + 1] = prefix .. "(empty)"
+        return
+    end
 
-    -- Effective settings
-    lines[#lines + 1] = "Provider:   " .. (state_mod.resolve_provider() or "not set")
-    lines[#lines + 1] = "Model:      " .. (state_mod.resolve_model() or "not set")
-    lines[#lines + 1] = "Mode:       " .. (state_mod.resolve_mode() or "default")
-    lines[#lines + 1] = "Memory:     " .. (state_mod.resolve_memory() or "all")
-    lines[#lines + 1] = "Max tokens: " .. tostring(state_mod.resolve_max_tokens())
-    lines[#lines + 1] = "Timeout:    " .. tostring(state_mod.resolve_timeout()) .. "s"
-    lines[#lines + 1] = ""
+    if text:sub(-1) ~= "\n" then
+        text = text .. "\n"
+    end
 
-    -- Environment context
-    local ctx = M.capture_context()
-    lines[#lines + 1] = "Environment:"
-    lines[#lines + 1] = "  CWD:       " .. (ctx.cwd or "unknown")
-    lines[#lines + 1] = "  Git:       " .. (ctx.git_branch or "none")
-    lines[#lines + 1] = "  Terminal:  " .. ctx.term_width .. "x" .. ctx.term_height
-    lines[#lines + 1] = ""
+    for line in text:gmatch("(.-)\n") do
+        lines[#lines + 1] = prefix .. line
+    end
+end
 
-    -- Memory window contents
-    local mem = state_mod.resolve_memory()
-    local hist = state_mod.get_history()
-    lines[#lines + 1] = "Memory window (" .. mem .. "):"
-    local mem_msgs = state_mod.build_memory_messages()
-    if #mem_msgs == 0 then
-        lines[#lines + 1] = "  (empty)"
-    else
-        for i, m in ipairs(mem_msgs) do
-            local preview = m.content:sub(1, 80)
-            if #m.content > 80 then preview = preview .. "..." end
-            preview = preview:gsub("\n", " ")
-            lines[#lines + 1] = "  [" .. i .. "] " .. m.role .. ": " .. preview
+local function append_text_message(lines, role, content)
+    if #lines > 0 then
+        lines[#lines + 1] = ""
+    end
+    lines[#lines + 1] = "[" .. tostring(role or "message") .. "]"
+    append_block(lines, content, "")
+end
+
+--- Build a display string showing the full text content sent to the LLM.
+function M.format_context_display(user_text)
+    local preview_text = nil
+    if user_text and user_text ~= "" then
+        preview_text = user_text:match("^%s*(.-)%s*$")
+        if preview_text == "" then
+            preview_text = nil
         end
     end
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = "Stored history: " .. #hist .. " entries"
+
+    local is_shell_req = preview_text and M.is_shell_request(preview_text) or false
+    local ctx = M.capture_context()
+    local system_prompt = M.build_system_prompt(ctx, is_shell_req)
+    local lines = {}
+    local provider = state_mod.resolve_provider()
+    local model = state_mod.resolve_model()
+    local request_messages
+
+    if preview_text then
+        request_messages = M.build_messages(preview_text)
+    else
+        request_messages = state_mod.build_memory_messages()
+    end
+
+    if provider and model then
+        local body = provider_mod.build_request(
+            system_prompt,
+            request_messages,
+            provider,
+            model,
+            state_mod.resolve_mode(),
+            state_mod.resolve_max_tokens()
+        )
+
+        if body then
+            if body.system then
+                append_text_message(lines, "system", body.system)
+            end
+
+            for _, m in ipairs(body.messages or {}) do
+                append_text_message(lines, m.role, m.content)
+            end
+
+            return table.concat(lines, "\n")
+        end
+
+    end
+
+    append_text_message(lines, "system", system_prompt)
+    for _, m in ipairs(request_messages) do
+        append_text_message(lines, m.role, m.content)
+    end
 
     return table.concat(lines, "\n")
 end

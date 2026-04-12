@@ -33,7 +33,7 @@ set REX_API_KEY=anthropic:sk-ant-...,github:ghp_...,openai:sk-...
 | `rex_provider.lua` | Credentials, model discovery, HTTP transport, retries |
 | `json.lua` | Bundled JSON encoder/decoder |
 | `modes.json` | Provider-aware model modes and capability flags |
-| `rex_skills.md` | LLM system prompt — terminal rendering capabilities |
+| `rex_skills.md` | LLM runtime prompt source, including skills and prompt sections |
 
 ## Usage
 
@@ -68,7 +68,7 @@ Slash commands are submitted via **Ctrl+Enter**, same as prompts.
 | `/model` | Select model via popup list |
 | `/mode` | Select mode (e.g., thinking, reasoning effort) |
 | `/memory` | Select the conversation-memory window |
-| `/context` | Show current context sent to the LLM |
+| `/context` | Show text sent to the LLM; `/context <prompt>` includes a specific prompt |
 | `/help` | List commands |
 
 ## API Key Prefixes

@@ -29,7 +29,7 @@ local state = {
     config        = nil,  -- parsed config file contents
     modes_data    = nil,  -- parsed modes.json contents
     skills_text   = nil,  -- loaded rex_skills.md contents
-    system_text   = nil,  -- loaded rex_system.md contents
+    skills_sections = nil, -- parsed prompt sections from rex_skills.md
     -- Track whether recall session has been allocated for this instance
     session_allocated = false,
     -- Track web-search rejections: {[provider..credential..model] = true}
@@ -394,8 +394,29 @@ function M.resolve_capabilities(provider, model_id)
 end
 
 -- ================================================================
--- Skills / system prompt loading
+-- Skills loading
 -- ================================================================
+
+local function trim_text(text)
+    return (text or ""):match("^%s*(.-)%s*$")
+end
+
+local function parse_skills_sections(text)
+    local sections = {}
+    if not text or text == "" then
+        return sections
+    end
+
+    for name, body in text:gmatch("<!--%s*REX_SECTION:([%w_%-]+)%s*-->%s*(.-)%s*<!--%s*/REX_SECTION%s*-->") do
+        sections[name] = trim_text(body)
+    end
+
+    if not next(sections) then
+        sections.shared_guidance = trim_text(text)
+    end
+
+    return sections
+end
 
 function M.load_skills()
     if not script_dir then return nil end
@@ -405,6 +426,7 @@ function M.load_skills()
     local text = f:read("*a")
     f:close()
     state.skills_text = text
+    state.skills_sections = parse_skills_sections(text)
     return text
 end
 
@@ -415,22 +437,14 @@ function M.get_skills()
     return state.skills_text
 end
 
-function M.load_system_prompt()
-    if not script_dir then return nil end
-    local path = script_dir .. "rex_system.md"
-    local f = io.open(path, "r")
-    if not f then return nil end
-    local text = f:read("*a")
-    f:close()
-    state.system_text = text
-    return text
-end
-
-function M.get_system_prompt()
-    if not state.system_text then
-        M.load_system_prompt()
+function M.get_skill_section(name)
+    if not state.skills_sections then
+        M.load_skills()
     end
-    return state.system_text
+    if not state.skills_sections then
+        return nil
+    end
+    return state.skills_sections[name]
 end
 
 -- ================================================================

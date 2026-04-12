@@ -23,7 +23,6 @@ turn_mod.init(json, state_mod, provider_mod)
 -- Load modes.json and skills at startup
 state_mod.load_modes(json)
 state_mod.load_skills()
-state_mod.load_system_prompt()
 state_mod.load_config()
 
 -- ================================================================
@@ -82,7 +81,7 @@ local function cmd_help()
         "  /mode      Select model mode",
         "  /memory    Select conversation-memory window",
         "  /settings  Show current settings",
-        "  /context   Show what context is sent to the LLM",
+        "  /context   Show text sent to LLM; /context <prompt> includes prompt",
         "  /help      Show this help",
         "",
         "Type any text and press Ctrl+Enter to send it to Rex.",
@@ -107,9 +106,9 @@ local function cmd_settings()
     print_output(table.concat(lines, "\n"))
 end
 
---- /context — show what context is being sent
-local function cmd_context()
-    local display = turn_mod.format_context_display()
+--- /context — show the text sent to the LLM
+local function cmd_context(preview_prompt)
+    local display = turn_mod.format_context_display(preview_prompt)
     print_output(display)
 end
 
@@ -450,6 +449,9 @@ function rex_submit(rl_buffer)
             cmd_settings()
         elseif trimmed == "/context" then
             cmd_context()
+        elseif trimmed:match("^/context%s+") then
+            local preview_prompt = trimmed:match("^/context%s+(.+)$")
+            cmd_context(preview_prompt)
         elseif trimmed:match("^/") then
             -- Unrecognized slash command
             print_output("Unknown command: " .. trimmed .. ". Type /help for available commands.")
