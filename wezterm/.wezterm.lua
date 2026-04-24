@@ -82,10 +82,8 @@ config.disable_default_key_bindings = true
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.scrollback_lines = 200000
 config.show_close_tab_button_in_tabs = false
-config.status_update_interval = 1000
+config.status_update_interval = 300
 config.window_decorations = 'RESIZE'
-local focused_status_update_interval = config.status_update_interval
-local unfocused_status_update_interval = 5000
 
 -- Selection of dark themes with acceptable contrast
 config.color_scheme = 'Bright (base16)'
@@ -192,6 +190,9 @@ end
 -- normalize windows path by stripping URI scheme
 
 local function normalize_path(path)
+  if type(path) ~= 'string' then
+    return ''
+  end
   local npath = path
   npath = npath:gsub('^file:///', '')
   npath = npath:gsub('^file://', '')
@@ -199,12 +200,14 @@ local function normalize_path(path)
   npath = npath:gsub('^/([A-Za-z]:)','%1')
   return npath
 end
+
 local function get_wsl_distribution_name(domain_name)
   if type(domain_name) ~= 'string' then
     return nil
   end
   return domain_name:match('^WSL:(.+)$')
 end
+
 local function get_mux_pane(pane)
   if not pane then
     return nil
@@ -226,14 +229,40 @@ local function get_mux_pane(pane)
   end
   return pane
 end
-local function to_unix_time(t)
-  if not is_windows then
-    -- already Unix time
-    return t
+
+-- convert Windows to Unix time, Windows epoch date is Jan 01, 1601 - 134774 days before Unix
+-- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
+local windows_filetime_unix_epoch_delta = 134774 * 86400
+local earliest_reasonable_process_start_time = 946684800   -- 2000-01-01
+local latest_reasonable_process_start_skew = 86400
+
+local function normalize_process_start_time(t)
+  if type(t) ~= 'number' or t <= 0 then
+    return nil
   end
-  -- convert Windows to Unix time, Windows epoch date is Jan 01, 1601 - 134774 days before Unix
-  -- https://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-  return math.floor(t / 10000000 - 134774 * 86400);
+
+  local seconds
+  if t > 10000000000000000 then
+    -- Windows FILETIME: 100ns ticks since 1601-01-01.
+    seconds = math.floor(t / 10000000 - windows_filetime_unix_epoch_delta)
+  elseif t > 1000000000000 then
+    -- Unix milliseconds.
+    seconds = math.floor(t / 1000)
+  else
+    -- Unix seconds, or an undocumented raw value. Validate below before use.
+    seconds = math.floor(t)
+  end
+
+  local now = os.time()
+  if seconds < earliest_reasonable_process_start_time or seconds > now + latest_reasonable_process_start_skew then
+    return nil
+  end
+
+  local ok = pcall(os.date, '%Y', seconds)
+  if not ok then
+    return nil
+  end
+  return seconds
 end
 
 local process_info_cache = {}
@@ -253,10 +282,7 @@ local function query_process_name_fullname_cwd_pid_time_argv(pane)
   if type(executable) ~= 'string' or executable == '' then
     executable = name
   end
-  local process_time = nil
-  if type(info.start_time) == 'number' then
-    process_time = to_unix_time(info.start_time)
-  end
+  local process_time = normalize_process_start_time(info.start_time)
   local argv = type(info.argv) == 'table' and info.argv or nil
   local p_name = get_rootname(name:lower()) or name:lower()
   local f_name = executable:lower()
@@ -879,7 +905,9 @@ if wezterm.target_triple:match('darwin') then
 end
 
 -- Apply local key binds last so machine-specific overrides can win.
-if local_config.keys then
+if local_config.keys ~= nil and type(local_config.keys) ~= 'table' then
+  wezterm.log_warn('wezterm_local.keys must be a table; ignoring local key bindings')
+elseif local_config.keys then
   for _, v in ipairs(local_config.keys) do
     table.insert(config.keys, v)
   end
@@ -933,24 +961,20 @@ local function get_window_status_state(window)
   return state
 end
 
--- Background windows can poll less aggressively; keep focused windows snappy
--- without paying the same cost for every unfocused window.
-local function apply_window_status_interval(window)
-  if not window or not window.set_config_overrides then
+local function clear_status_interval_override(window)
+  if not window or not window.get_config_overrides or not window.set_config_overrides then
     return
   end
-  local desired = window:is_focused() and focused_status_update_interval or unfocused_status_update_interval
   local state = get_window_status_state(window)
-  if state.status_update_interval == desired then
+  if state.cleared_status_interval_override then
     return
   end
   local overrides = window:get_config_overrides() or {}
-  local override_value = desired ~= focused_status_update_interval and desired or nil
-  if overrides.status_update_interval ~= override_value then
-    overrides.status_update_interval = override_value
+  if overrides.status_update_interval ~= nil then
+    overrides.status_update_interval = nil
     window:set_config_overrides(overrides)
   end
-  state.status_update_interval = desired
+  state.cleared_status_interval_override = true
 end
 
 local function get_pane_cache_id(pane)
@@ -1016,15 +1040,120 @@ local function get_battery_status()
 end
 
 local pane_start_time_cache = {}
+local stable_display_delay_seconds = 1
+local pane_status_cwd_cache = {}
+local pane_process_display_cache = {}
+local tab_title_process_name_cache = {}
+
+local function get_display_clock_seconds()
+  if wezterm.time and wezterm.time.now then
+    local ok, text = pcall(function()
+      return wezterm.time.now():format_utc('%s%.3f')
+    end)
+    local seconds = ok and tonumber(text) or nil
+    if seconds then
+      return seconds
+    end
+  end
+
+  if wezterm.strftime_utc then
+    local ok, text = pcall(wezterm.strftime_utc, '%s%.3f')
+    local seconds = ok and tonumber(text) or nil
+    if seconds then
+      return seconds
+    end
+  end
+
+  return os.time()
+end
+
+local function get_stable_display_value(cache, key, signature, value)
+  if key == nil then
+    return value
+  end
+
+  local now = get_display_clock_seconds()
+  local state = cache[key]
+  if not state then
+    state = {
+      signature = signature,
+      value = value,
+    }
+    cache[key] = state
+    return value
+  end
+
+  if state.signature == signature then
+    state.candidate_signature = nil
+    state.candidate_value = nil
+    state.candidate_since = nil
+    return state.value
+  end
+
+  if state.candidate_signature ~= signature then
+    state.candidate_signature = signature
+    state.candidate_value = value
+    state.candidate_since = now
+    return state.value
+  end
+
+  if now - state.candidate_since >= stable_display_delay_seconds then
+    state.signature = state.candidate_signature
+    state.value = state.candidate_value
+    state.candidate_signature = nil
+    state.candidate_value = nil
+    state.candidate_since = nil
+  end
+  return state.value
+end
+
+local function get_running_process_display(pane_id, process_name, fullname, pid, process_time, shell, is_alt)
+  local raw_display = nil
+  local signature = table.concat({
+    process_name or '',
+    fullname or '',
+    tostring(pid or ''),
+    tostring(process_time or ''),
+    shell or '',
+    is_alt and 'alt' or '',
+  }, '\31')
+
+  if process_time then
+    local running_color
+    if shell or not process_name or is_alt then
+      -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
+      running_color = '#3D8AB1'
+    else
+      -- show red running time for some process in progress
+      running_color = '#AB696F'
+    end
+
+    raw_display = {
+      process_time = process_time,
+      color = running_color,
+    }
+  end
+
+  local display = get_stable_display_value(pane_process_display_cache, pane_id, signature, raw_display)
+  if display then
+    return display.process_time, display.color or ''
+  end
+  return nil, ''
+end
+
 local function get_pane_start_time(pane_id, process_time)
   if not pane_id or not process_time then
     return '------------------------------'
   end
   local cached = pane_start_time_cache[pane_id]
   if not cached or cached.process_time ~= process_time then
+    local ok, date_text = pcall(os.date, '%b %d %X', process_time)
+    if not ok then
+      return '------------------------------'
+    end
     cached = {
       process_time = process_time,
-      text = wezterm.nerdfonts.fa_clock..' '..os.date('%b %d %X', process_time),
+      text = wezterm.nerdfonts.fa_clock..' '..date_text,
     }
     pane_start_time_cache[pane_id] = cached
   end
@@ -1103,23 +1232,18 @@ local format_right_status = function(window, pane)
     local process_name, fullname, cwd, pid, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
     local shell = process_name and fullname and get_shell(process_name, fullname, argv) or nil
     cwd = get_display_cwd(pane, cwd, pid)
+    cwd = get_stable_display_value(pane_status_cwd_cache, pane_id, cwd or '', cwd or '')
 
     local clink_color = toggle_color(user_vars.clink)
     local zsh_color = toggle_color(user_vars.zsh)
     local nvim_color = toggle_color(user_vars.nvim)
-    local running_time, days, running_color = '', 0, ''
-    if process_time then
-      running_time = os.time() - process_time
-      days = math.floor(running_time / 86400)
-      running_time = ( days>0 and days..'d' or '')..os.date('!%X', running_time)
-      local is_alt = pane:is_alt_screen_active()
-      if shell or not process_name or is_alt then
-        -- show blueish running time for: recognized idle shell, wezterm overlay, alt screen app
-        running_color = '#3D8AB1'
-      else
-        -- show red running time for some process in progress
-        running_color = '#AB696F'
-      end
+    local running_time, days = '', 0
+    local display_process_time, running_color =
+      get_running_process_display(pane_id, process_name, fullname, pid, process_time, shell, pane:is_alt_screen_active())
+    if display_process_time then
+      local elapsed_seconds = math.max(0, os.time() - display_process_time)
+      days = math.floor(elapsed_seconds / 86400)
+      running_time = ( days>0 and days..'d' or '')..os.date('!%X', elapsed_seconds)
     end
     local battery_status = get_battery_status()
     local key_icons = get_key_icons_stack(window)
@@ -1146,7 +1270,7 @@ local format_right_status = function(window, pane)
       { Foreground = { Color = battery_status.color } },
       { Text = battery_status.icon .. battery_status.text .. '' },
       { Foreground = { Color = 'Gray' } },
-      { Text = get_pane_start_time(pane_id, process_time) .. '      ' },
+      { Text = get_pane_start_time(pane_id, display_process_time) .. '      ' },
     })
   end)
   if not ok then
@@ -1169,25 +1293,20 @@ wezterm.on('user-var-changed', function(window, pane, name, value)
   process_info_cache[pane_id] = nil
   pane_cwd_cache[pane_id] = nil
 end)
+
 wezterm.on('window-focus-changed', function(window, pane)
-  apply_window_status_interval(window)
+  clear_status_interval_override(window)
 end)
 
 wezterm.on('update-status', function(window, pane)
-  -- WezTerm overlays and prompt transitions proved unreliable with conditional
-  -- right-status redraws, so force a redraw each tick here.
-  apply_window_status_interval(window)
+  clear_status_interval_override(window)
   local state = get_window_status_state(window)
   local left_status = format_left_status(window, pane)
   if left_status ~= state.left_status then
     window:set_left_status(left_status)
     state.left_status = left_status
   end
-  -- fix for nudging the tab title redraw for wezterm overlays
-  window:set_right_status('')
-  local right_status = format_right_status(window, pane)
-  window:set_right_status(right_status)
-  state.right_status = right_status
+  window:set_right_status(format_right_status(window, pane))
 end)
 
 -- Format tab title.
@@ -1215,6 +1334,7 @@ local function get_tab_title_text(pane)
   end
   local pane_title = type(pane.title) == 'string' and pane.title or get_pane_title_text(pane)
   local name = get_tab_title_process_name(pane)
+  name = get_stable_display_value(tab_title_process_name_cache, pane_id, name or '', name)
   if not name or name == '' then
     return nil
   end
