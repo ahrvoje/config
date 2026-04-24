@@ -37,7 +37,7 @@ set search-ignore-case                        on
 "\t":          "luafunc:fzf_complete"           # Tab uses fzf to filter match completions, but only when preceded by '**' (recursive).
 "\e[27;5;32~": "luafunc:fzf_complete_force"     # Ctrl-Space uses fzf to filter match completions (and supports '**' for recursive).
 "\C-y":        "luafunc:fzf_disks"              # Ctrl-Y lists files across all local disks; choose one or multiple to insert them.
-"\M-z":        "luafunc:zoxide_interactive"      # Alt-Z shows zoxide directory history; choose one to cd to it.
-"\M-d":        clink-popup-directories           # Alt-D shows clink's built-in directory history popup.
-"\e[27;5;13~": "luafunc:rex_submit"              # Ctrl-Enter sends input to Rex AI instead of cmd.exe.
-"\e[13;5u":    "luafunc:rex_submit"              # Ctrl-Enter CSI u fallback for Rex AI.
+"\M-z":        "luafunc:zoxide_interactive"     # Alt-Z shows zoxide directory history; choose one to cd to it.
+"\M-d":        clink-popup-directories          # Alt-D shows clink's built-in directory history popup.
+"\e[27;5;13~": "luafunc:rex_submit"             # Ctrl-Enter sends input to Rex AI instead of cmd.exe.
+"\e[13;5u":    "luafunc:rex_submit"             # Ctrl-Enter CSI u fallback for Rex AI.
