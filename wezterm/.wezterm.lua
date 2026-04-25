@@ -949,7 +949,6 @@ local battery_cache = { data = nil, last_update = 0 }
 local window_status_cache = {}
 local tab_title_cache = {}
 local pane_user_vars_cache = {}
-local pane_cwd_cache = {}
 
 local function get_window_status_state(window)
   local window_id = window:window_id()
@@ -1044,6 +1043,88 @@ local stable_display_delay_seconds = 1
 local pane_status_cwd_cache = {}
 local pane_process_display_cache = {}
 local tab_title_process_name_cache = {}
+
+-- Async pane snapshot. The slow process/cwd queries run in a refresher
+-- scheduled via wezterm.time.call_after, so the status formatter and tab
+-- title formatter only ever read cached values and the timer tick stays
+-- snappy regardless of how long get_foreground_process_info takes.
+local pane_snapshot_cache = {}
+local pane_refresh_pending = {}
+local pane_refresh_pending_since = {}
+local snapshot_min_age_seconds = 1
+local snapshot_pending_recover_seconds = 5
+
+local function compute_display_cwd(pane, process_cwd)
+  local ok, cwd = pcall(pane.get_current_working_dir, pane)
+  if ok and cwd then
+    if type(cwd) == 'string' then
+      return normalize_path(cwd)
+    elseif cwd.file_path then
+      return normalize_path(cwd.file_path)
+    else
+      return normalize_path(tostring(cwd))
+    end
+  end
+  if type(process_cwd) == 'string' and process_cwd ~= '' then
+    return normalize_path(process_cwd)
+  end
+  return ''
+end
+
+local function refresh_pane_snapshot(pane)
+  local pane_id = get_pane_cache_id(pane)
+  if pane_id == nil then return end
+  local p_name, f_name, raw_cwd, pid, process_time, argv =
+    query_process_name_fullname_cwd_pid_time_argv(pane)
+  local shell = (p_name and f_name) and get_shell(p_name, f_name, argv) or nil
+  local display_cwd = compute_display_cwd(pane, raw_cwd)
+  if p_name and f_name then
+    cache_process_info(pane, p_name, f_name, raw_cwd, pid, process_time, argv)
+  end
+  pane_snapshot_cache[pane_id] = {
+    process_name = p_name,
+    fullname     = f_name,
+    pid          = pid,
+    process_time = process_time,
+    argv         = argv,
+    shell        = shell,
+    cwd          = display_cwd,
+    last_update  = os.time(),
+  }
+end
+
+local function get_pane_snapshot(pane)
+  local pane_id = get_pane_cache_id(pane)
+  if pane_id == nil then return nil end
+  return pane_snapshot_cache[pane_id]
+end
+
+-- Schedule a deferred refresh of the pane snapshot. Rate-limited to once per
+-- second per pane; pending flag has a 5s stuck-recovery so a failed callback
+-- can never lock the refresher forever.
+local function schedule_pane_refresh(pane)
+  local pane_id = get_pane_cache_id(pane)
+  if pane_id == nil then return end
+  local snapshot = pane_snapshot_cache[pane_id]
+  local now = os.time()
+  if snapshot and (now - snapshot.last_update) < snapshot_min_age_seconds then
+    return
+  end
+  if pane_refresh_pending[pane_id] then
+    local since = pane_refresh_pending_since[pane_id] or now
+    if (now - since) < snapshot_pending_recover_seconds then
+      return
+    end
+    -- Falls through: previous callback never cleared the flag.
+  end
+  pane_refresh_pending[pane_id] = true
+  pane_refresh_pending_since[pane_id] = now
+  wezterm.time.call_after(0, function()
+    pcall(refresh_pane_snapshot, pane)
+    pane_refresh_pending[pane_id] = nil
+    pane_refresh_pending_since[pane_id] = nil
+  end)
+end
 
 local function get_display_clock_seconds()
   if wezterm.time and wezterm.time.now then
@@ -1160,38 +1241,6 @@ local function get_pane_start_time(pane_id, process_time)
   return cached.text
 end
 
--- Prefer WezTerm's current-working-directory API when available, but throttle
--- the call and fall back to process cwd if needed.
-local function get_display_cwd(pane, process_cwd, process_pid)
-  local pane_id = get_pane_cache_id(pane)
-  local cached = pane_id and pane_cwd_cache[pane_id] or nil
-  local now = os.time()
-  if cached and cached.process_pid == process_pid and (now - cached.last_update) < 2 then
-    return cached.cwd
-  end
-  local ok, cwd = pcall(pane.get_current_working_dir, pane)
-  local display_cwd = ''
-  if ok and cwd then
-    if type(cwd) == 'string' then
-      display_cwd = normalize_path(cwd)
-    elseif cwd.file_path then
-      display_cwd = normalize_path(cwd.file_path)
-    else
-      display_cwd = normalize_path(tostring(cwd))
-    end
-  elseif type(process_cwd) == 'string' and process_cwd ~= '' then
-    display_cwd = normalize_path(process_cwd)
-  end
-  if pane_id ~= nil then
-    pane_cwd_cache[pane_id] = {
-      cwd = display_cwd,
-      process_pid = process_pid,
-      last_update = now,
-    }
-  end
-  return display_cwd
-end
-
 local function get_pane_title_text(pane)
   if type(pane.title) == 'string' then
     return pane.title
@@ -1226,13 +1275,19 @@ end
 
 local format_right_status = function(window, pane)
   local ok, result = pcall(function()
+    schedule_pane_refresh(pane)
+
     local user_vars = get_cached_user_vars(pane)
     local pane_id = pane:pane_id()
     local domain_name = pane:get_domain_name()
-    local process_name, fullname, cwd, pid, process_time, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
-    local shell = process_name and fullname and get_shell(process_name, fullname, argv) or nil
-    cwd = get_display_cwd(pane, cwd, pid)
-    cwd = get_stable_display_value(pane_status_cwd_cache, pane_id, cwd or '', cwd or '')
+    local snapshot = get_pane_snapshot(pane) or {}
+    local process_name = snapshot.process_name
+    local fullname     = snapshot.fullname
+    local pid          = snapshot.pid
+    local process_time = snapshot.process_time
+    local shell        = snapshot.shell
+    local cwd          = snapshot.cwd or ''
+    cwd = get_stable_display_value(pane_status_cwd_cache, pane_id, cwd, cwd)
 
     local clink_color = toggle_color(user_vars.clink)
     local zsh_color = toggle_color(user_vars.zsh)
@@ -1290,8 +1345,13 @@ wezterm.on('user-var-changed', function(window, pane, name, value)
     pane_user_vars_cache[pane_id] = cached
   end
   cached[name] = value
+  -- Mark process snapshot stale (so the next status tick schedules a refresh)
+  -- but keep the last value visible until the async refresher fills in the
+  -- new one — avoids a blank flash on every prompt.
   process_info_cache[pane_id] = nil
-  pane_cwd_cache[pane_id] = nil
+  if pane_snapshot_cache[pane_id] then
+    pane_snapshot_cache[pane_id].last_update = 0
+  end
 end)
 
 wezterm.on('window-focus-changed', function(window, pane)
