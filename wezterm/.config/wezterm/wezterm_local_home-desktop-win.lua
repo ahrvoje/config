@@ -1,6 +1,19 @@
 local wezterm = require 'wezterm'
 
+local home = wezterm.home_dir:gsub('\\', '/')
+local local_appdata = (os.getenv('LOCALAPPDATA') or (home .. '/AppData/Local')):gsub('\\', '/')
+
+local function home_path(path)
+  return home .. '/' .. path
+end
+
+local function local_appdata_path(path)
+  return local_appdata .. '/' .. path
+end
+
 return {
+  front_end = 'WebGpu',
+
   font = wezterm.font 'Consolas',
   font_size = 12,
   window_frame = { font_size = 12 },
@@ -8,8 +21,8 @@ return {
 
   keys = {
     { key = 'j', mods = 'LEADER', action = wezterm.action.SendString 'C:/Julia-1.11.5/bin/julia.exe' },
-    { key = 'p', mods = 'LEADER', action = wezterm.action.SendString 'C:/Users/H/AppData/Local/Programs/Python/Python314/python.exe' },
-    { key = 't', mods = 'LEADER', action = wezterm.action.SendString 'C:/Users/H/AppData/Local/Programs/Python/Python314/Scripts/ptpython.exe' },
+    { key = 'p', mods = 'LEADER', action = wezterm.action.SendString(local_appdata_path('Programs/Python/Python314/python.exe')) },
+    { key = 't', mods = 'LEADER', action = wezterm.action.SendString(local_appdata_path('Programs/Python/Python314/Scripts/ptpython.exe')) },
   },
   
   launch_menu = {
@@ -40,7 +53,7 @@ return {
     },
     {
       label = 'Nu',
-      args = { 'C:/Users/H/AppData/Local/Programs/nu/nu.exe' },
+      args = { local_appdata_path('Programs/nu/nu.exe') },
     }
   },
   
@@ -49,6 +62,6 @@ return {
       -- and inject clink into the command prompt
       'clink', 'inject', '-q', '&&',
       -- set cmd aliases
-      'C:/Users/H/cmdrc.cmd'
+      home_path('cmdrc.cmd')
   },
 }
