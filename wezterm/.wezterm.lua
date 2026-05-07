@@ -21,6 +21,11 @@ local function log_warn_rate_limited(key, message, interval_seconds)
   wezterm.log_warn(message)
 end
 
+local function is_stale_mux_object_error(err)
+  local text = tostring(err)
+  return text:match('not found in mux') ~= nil
+end
+
 --------------DEFAULT CONFIGURATION--------------
 -- Shared defaults plus optional per-machine overrides.
 
@@ -33,7 +38,7 @@ local default_config = {
   cursor_blink_ease_out   = 'Constant',
   max_fps                 = 60,
   scrollback_lines        = 50000,
-  status_update_interval  = 1000,
+  status_update_interval  = 300,
   -- font                 = nil,
   -- font_size            = nil,
   -- front_end            = nil,
@@ -1109,13 +1114,18 @@ end
 -- User vars are event-driven, so cache them and let the event handler update
 -- the copy instead of polling every status tick.
 local function get_cached_user_vars(pane)
+  if not pane then
+    return {}
+  end
   local pane_id = get_pane_cache_id(pane)
   if pane_id == nil then
     local ok, user_vars = pcall(pane.get_user_vars, pane)
     if ok and type(user_vars) == 'table' then
       return user_vars
     end
-    log_warn_rate_limited('user-vars', 'Failed to read pane user vars: ' .. tostring(user_vars))
+    if not is_stale_mux_object_error(user_vars) then
+      log_warn_rate_limited('user-vars', 'Failed to read pane user vars: ' .. tostring(user_vars))
+    end
     return {}
   end
   local cached = pane_user_vars_cache[pane_id]
@@ -1124,7 +1134,9 @@ local function get_cached_user_vars(pane)
   end
   local ok, user_vars = pcall(pane.get_user_vars, pane)
   if not ok or type(user_vars) ~= 'table' then
-    log_warn_rate_limited('user-vars', 'Failed to read pane user vars: ' .. tostring(user_vars))
+    if not is_stale_mux_object_error(user_vars) then
+      log_warn_rate_limited('user-vars', 'Failed to read pane user vars: ' .. tostring(user_vars))
+    end
     user_vars = {}
   end
   pane_user_vars_cache[pane_id] = user_vars
@@ -1187,11 +1199,12 @@ local function get_battery_status()
 end
 
 local pane_start_time_cache = {}
-local stable_display_delay_seconds = 1
+local stable_display_delay_seconds = 0.5
 local pane_status_cwd_cache = {}
 local pane_process_display_cache = {}
 local tab_title_process_name_cache = {}
 local tab_title_snapshot_max_age_seconds = 5
+local fallback_process_start_by_pane = {}
 
 -- Async pane snapshot. The slow process/cwd queries run in a refresher
 -- scheduled via wezterm.time.call_after, so the status formatter and tab
@@ -1204,6 +1217,7 @@ local snapshot_min_age_seconds = 1
 local snapshot_pending_recover_seconds = 5
 local cache_prune_last_update = 0
 local cache_prune_interval_seconds = 60
+local refresh_window_status
 
 local function collect_live_cache_ids()
   local live_panes = {}
@@ -1266,6 +1280,7 @@ local function prune_dead_cache_entries()
   prune_cache(pane_status_cwd_cache, live_panes)
   prune_cache(pane_process_display_cache, live_panes)
   prune_cache(tab_title_process_name_cache, live_panes)
+  prune_cache(fallback_process_start_by_pane, live_panes)
   prune_cache(pane_snapshot_cache, live_panes)
   prune_cache(pane_refresh_pending, live_panes)
   prune_cache(pane_refresh_pending_since, live_panes)
@@ -1293,22 +1308,68 @@ end
 local function refresh_pane_snapshot(pane)
   local pane_id = get_pane_cache_id(pane)
   if pane_id == nil then return end
+  local now = os.time()
+  local previous = pane_snapshot_cache[pane_id]
   local p_name, f_name, raw_cwd, pid, process_time, argv =
     query_process_name_fullname_cwd_pid_time_argv(pane)
+  local got_live_process = p_name and f_name
+  if not got_live_process and previous and previous.process_name and previous.fullname then
+    p_name       = previous.process_name
+    f_name       = previous.fullname
+    pid          = previous.pid
+    process_time = previous.process_time
+    argv         = previous.argv
+  elseif not got_live_process then
+    p_name, f_name, raw_cwd, pid, process_time, argv =
+      get_cached_process_info(pane, nil)
+  end
+  if not process_time and p_name and f_name then
+    local fallback = fallback_process_start_by_pane[pane_id]
+    local same_fallback_process = fallback
+      and fallback.process_name == p_name
+      and fallback.fullname == f_name
+      and (fallback.pid == pid or fallback.pid == nil or pid == nil)
+    local same_previous_process = previous
+      and previous.process_time
+      and previous.process_name == p_name
+      and previous.fullname == f_name
+      and (previous.pid == pid or previous.pid == nil or pid == nil)
+
+    if same_previous_process then
+      process_time = previous.process_time
+    elseif same_fallback_process then
+      process_time = fallback.process_time
+    else
+      process_time = now
+    end
+  end
+  if process_time and p_name and f_name then
+    fallback_process_start_by_pane[pane_id] = {
+      process_name = p_name,
+      fullname = f_name,
+      pid = pid,
+      process_time = process_time,
+    }
+  end
   local shell = (p_name and f_name) and get_shell(p_name, f_name, argv) or nil
   local display_cwd = compute_display_cwd(pane, raw_cwd)
-  if p_name and f_name then
+  if display_cwd == '' and previous and type(previous.cwd) == 'string' then
+    display_cwd = previous.cwd
+  end
+  if got_live_process then
     cache_process_info(pane, p_name, f_name, raw_cwd, pid, process_time, argv)
   end
   pane_snapshot_cache[pane_id] = {
-    process_name = p_name,
-    fullname     = f_name,
-    pid          = pid,
-    process_time = process_time,
-    argv         = argv,
-    shell        = shell,
-    cwd          = display_cwd,
-    last_update  = os.time(),
+    process_name        = p_name,
+    fullname            = f_name,
+    pid                 = pid,
+    process_time        = process_time,
+    argv                = argv,
+    shell               = shell,
+    cwd                 = display_cwd,
+    process_is_fallback = not got_live_process,
+    last_process_update = got_live_process and now or (previous and previous.last_process_update),
+    last_update         = now,
   }
 end
 
@@ -1318,15 +1379,29 @@ local function get_pane_snapshot(pane)
   return pane_snapshot_cache[pane_id]
 end
 
+local function ensure_pane_snapshot(pane)
+  local pane_id = get_pane_cache_id(pane)
+  if pane_id == nil or pane_snapshot_cache[pane_id] then
+    return
+  end
+  local ok, err = pcall(refresh_pane_snapshot, pane)
+  if not ok then
+    log_warn_rate_limited(
+      'pane-initial-refresh-' .. tostring(pane_id),
+      'Failed to build initial pane snapshot for pane ' .. tostring(pane_id) .. ': ' .. tostring(err)
+    )
+  end
+end
+
 -- Schedule a deferred refresh of the pane snapshot. Rate-limited to once per
 -- second per pane; pending flag has a 5s stuck-recovery so a failed callback
 -- can never lock the refresher forever.
-local function schedule_pane_refresh(pane)
+local function schedule_pane_refresh(pane, after_refresh, force)
   local pane_id = get_pane_cache_id(pane)
   if pane_id == nil then return end
   local snapshot = pane_snapshot_cache[pane_id]
   local now = os.time()
-  if snapshot and (now - snapshot.last_update) < snapshot_min_age_seconds then
+  if not force and snapshot and (now - snapshot.last_update) < snapshot_min_age_seconds then
     return
   end
   if pane_refresh_pending[pane_id] then
@@ -1338,7 +1413,7 @@ local function schedule_pane_refresh(pane)
   end
   pane_refresh_pending[pane_id] = true
   pane_refresh_pending_since[pane_id] = now
-  wezterm.time.call_after(0, function()
+  wezterm.time.call_after(0.05, function()
     local ok, err = pcall(refresh_pane_snapshot, pane)
     if not ok then
       log_warn_rate_limited(
@@ -1348,6 +1423,15 @@ local function schedule_pane_refresh(pane)
     end
     pane_refresh_pending[pane_id] = nil
     pane_refresh_pending_since[pane_id] = nil
+    if ok and after_refresh then
+      local ok_after, after_err = pcall(after_refresh)
+      if not ok_after then
+        log_warn_rate_limited(
+          'pane-refresh-after-' .. tostring(pane_id),
+          'Failed to repaint after pane snapshot refresh for pane ' .. tostring(pane_id) .. ': ' .. tostring(after_err)
+        )
+      end
+    end
   end)
 end
 
@@ -1439,6 +1523,13 @@ local function get_running_process_display(pane_id, process_name, fullname, pid,
       color = running_color,
     }
   end
+  if not raw_display and pane_id ~= nil then
+    local state = pane_process_display_cache[pane_id]
+    local display = state and (state.value or state.candidate_value)
+    if display and display.process_time then
+      return display.process_time, display.color or ''
+    end
+  end
 
   local display = get_stable_display_value(pane_process_display_cache, pane_id, signature, raw_display)
   if display then
@@ -1506,14 +1597,108 @@ local function get_tab_title_process_name(pane)
   return cached_name
 end
 
+local function safe_active_workspace(window)
+  if not window or type(window.active_workspace) ~= 'function' then
+    return ''
+  end
+  local ok, workspace = pcall(window.active_workspace, window)
+  if ok and type(workspace) == 'string' then
+    return workspace
+  end
+  return ''
+end
+
+local function safe_pane_domain_name(pane)
+  if not pane or type(pane.get_domain_name) ~= 'function' then
+    return ''
+  end
+  local ok, domain_name = pcall(pane.get_domain_name, pane)
+  if ok and type(domain_name) == 'string' then
+    return domain_name
+  end
+  return ''
+end
+
+local function safe_pane_alt_screen_active(pane)
+  if not pane or type(pane.is_alt_screen_active) ~= 'function' then
+    return false
+  end
+  local ok, is_alt = pcall(pane.is_alt_screen_active, pane)
+  return ok and is_alt or false
+end
+
+local function append_format_item(items, color, text)
+  if text == nil then
+    return
+  end
+  text = tostring(text)
+  if text == '' then
+    return
+  end
+  if type(color) == 'string' and color ~= '' then
+    table.insert(items, { Foreground = { Color = color } })
+  end
+  table.insert(items, { Text = text })
+end
+
+local function format_elapsed_time(process_time)
+  local elapsed_seconds = math.max(0, math.floor(get_display_clock_seconds() - process_time))
+  local days = math.floor(elapsed_seconds / 86400)
+  local ok, time_text = pcall(os.date, '!%X', elapsed_seconds)
+  if not ok or type(time_text) ~= 'string' then
+    time_text = '00:00:00'
+  end
+  return (days > 0 and days..'d' or '')..time_text
+end
+
+local function get_cached_clock_process_time(pane_id)
+  if pane_id == nil then
+    return nil, ''
+  end
+  local state = pane_process_display_cache[pane_id]
+  local display = state and (state.value or state.candidate_value)
+  if display and display.process_time then
+    return display.process_time, display.color or ''
+  end
+  local snapshot = pane_snapshot_cache[pane_id]
+  if snapshot and snapshot.process_time then
+    return snapshot.process_time, snapshot.shell and '#3D8AB1' or '#AB696F'
+  end
+  local fallback = fallback_process_start_by_pane[pane_id]
+  if fallback and fallback.process_time then
+    return fallback.process_time, '#3D8AB1'
+  end
+  return nil, ''
+end
+
+local function format_right_status_fallback(window, pane)
+  local pane_id = get_pane_cache_id(pane)
+  local process_time, color = get_cached_clock_process_time(pane_id)
+  local items = {}
+  append_format_item(items, '#847EAE', safe_active_workspace(window)..' : '..safe_pane_domain_name(pane)..'    ')
+  if process_time then
+    append_format_item(items, color ~= '' and color or '#3D8AB1', format_elapsed_time(process_time)..'    ')
+  end
+  append_format_item(items, 'Gray', get_pane_start_time(pane_id, process_time) .. '      ')
+  return wezterm.format(items)
+end
+
 local format_right_status = function(window, pane)
   local state = get_window_status_state(window)
   local ok, result = pcall(function()
-    schedule_pane_refresh(pane)
+    local had_snapshot = get_pane_snapshot(pane) ~= nil
+    ensure_pane_snapshot(pane)
+    local initial_snapshot = get_pane_snapshot(pane) or {}
+    local force_refresh = not had_snapshot and (not initial_snapshot.process_name or initial_snapshot.process_is_fallback)
+    schedule_pane_refresh(pane, function()
+      if refresh_window_status then
+        refresh_window_status(window, pane)
+      end
+    end, force_refresh)
 
     local user_vars = get_cached_user_vars(pane)
     local pane_id = get_pane_cache_id(pane)
-    local domain_name = pane:get_domain_name()
+    local domain_name = safe_pane_domain_name(pane)
     local snapshot = get_pane_snapshot(pane) or {}
     local process_name = snapshot.process_name
     local fullname     = snapshot.fullname
@@ -1526,44 +1711,36 @@ local format_right_status = function(window, pane)
     local clink_color = toggle_color(user_vars.clink)
     local zsh_color = toggle_color(user_vars.zsh)
     local nvim_color = toggle_color(user_vars.nvim)
-    local running_time, days = '', 0
+    local running_time = ''
     local display_process_time, running_color =
-      get_running_process_display(pane_id, process_name, fullname, pid, process_time, shell, pane:is_alt_screen_active())
+      get_running_process_display(pane_id, process_name, fullname, pid, process_time, shell, safe_pane_alt_screen_active(pane))
     if display_process_time then
-      local elapsed_seconds = math.max(0, os.time() - display_process_time)
-      days = math.floor(elapsed_seconds / 86400)
-      running_time = ( days>0 and days..'d' or '')..os.date('!%X', elapsed_seconds)
+      running_time = format_elapsed_time(display_process_time)
     end
     local battery_status = get_battery_status()
     local key_icons = get_key_icons_stack(window)
 
     -- Format top status
     --------------------
-    return wezterm.format({
-      { Foreground = { Color = 'Yellow' } },
-      { Text = table.concat(key_icons, ' ') },
-      { Foreground = { Color = '#4488FF' } },
-      { Text = (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '' },
-      { Foreground = { Color = '#BBBBBB' } },
-      { Text = (cwd or '')..'      ' },
-      { Foreground = { Color = '#847EAE' } },
-      { Text = window:active_workspace()..' : '..domain_name..'    ' },
-      { Foreground = { Color = clink_color } },
-      { Text = wezterm.nerdfonts.md_alpha_c..' ' },
-      { Foreground = { Color = zsh_color } },
-      { Text = wezterm.nerdfonts.md_alpha_z..' ' },
-      { Foreground = { Color = nvim_color } },
-      { Text = wezterm.nerdfonts.custom_neovim..'    ' },
-      { Foreground = { Color = running_color } },
-      { Text = running_time..'    ' },
-      { Foreground = { Color = battery_status.color } },
-      { Text = battery_status.icon .. battery_status.text .. '' },
-      { Foreground = { Color = 'Gray' } },
-      { Text = get_pane_start_time(pane_id, display_process_time) .. '      ' },
-    })
+    local items = {}
+    append_format_item(items, 'Yellow', table.concat(key_icons, ' '))
+    append_format_item(items, '#4488FF', (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '')
+    append_format_item(items, '#BBBBBB', (cwd and cwd ~= '') and (cwd..'      ') or '')
+    append_format_item(items, '#847EAE', safe_active_workspace(window)..' : '..domain_name..'    ')
+    append_format_item(items, clink_color, wezterm.nerdfonts.md_alpha_c..' ')
+    append_format_item(items, zsh_color, wezterm.nerdfonts.md_alpha_z..' ')
+    append_format_item(items, nvim_color, wezterm.nerdfonts.custom_neovim..'    ')
+    append_format_item(items, running_color, running_time ~= '' and (running_time..'    ') or '')
+    append_format_item(items, battery_status.color, (battery_status.icon or '') .. (battery_status.text or ''))
+    append_format_item(items, 'Gray', get_pane_start_time(pane_id, display_process_time) .. '      ')
+    return wezterm.format(items)
   end)
   if not ok then
     log_warn_rate_limited('right-status', 'Failed to format right status: ' .. tostring(result))
+    local ok_fallback, fallback = pcall(format_right_status_fallback, window, pane)
+    if ok_fallback then
+      return fallback
+    end
     return state.right_status or ''
   end
   return result
@@ -1582,6 +1759,7 @@ local function mark_pane_display_stale(pane)
   tab_title_cache[pane_id] = nil
   pane_refresh_pending[pane_id] = nil
   pane_refresh_pending_since[pane_id] = nil
+  fallback_process_start_by_pane[pane_id] = nil
 
   if pane_snapshot_cache[pane_id] then
     pane_snapshot_cache[pane_id].last_update = 0
@@ -1589,7 +1767,10 @@ local function mark_pane_display_stale(pane)
   return pane_id
 end
 
-local function refresh_window_status(window, pane)
+refresh_window_status = function(window, pane)
+  if not window then
+    return
+  end
   clear_status_interval_override(window)
   prune_dead_cache_entries()
   local state = get_window_status_state(window)
@@ -1627,6 +1808,49 @@ local function get_window_active_pane(window)
   end
   log_warn_rate_limited('active-pane', 'Failed to read active pane: ' .. tostring(pane))
   return nil
+end
+
+local status_clock_generation = tostring(get_display_clock_seconds()) .. ':' .. tostring(math.random(1000000))
+local status_clock_started = false
+local function refresh_all_window_statuses()
+  if not wezterm.gui or type(wezterm.gui.gui_windows) ~= 'function' then
+    return
+  end
+  local ok_windows, windows = pcall(wezterm.gui.gui_windows)
+  if not ok_windows or type(windows) ~= 'table' then
+    log_warn_rate_limited('status-clock-windows', 'Failed to list GUI windows for status clock: ' .. tostring(windows))
+    return
+  end
+  for _, window in ipairs(windows) do
+    local pane = get_window_active_pane(window)
+    if pane then
+      refresh_window_status(window, pane)
+    end
+  end
+end
+
+local function schedule_status_clock_tick()
+  wezterm.time.call_after(0.5, function()
+    if wezterm.GLOBAL and wezterm.GLOBAL.status_clock_generation ~= status_clock_generation then
+      return
+    end
+    local ok, err = pcall(refresh_all_window_statuses)
+    if not ok then
+      log_warn_rate_limited('status-clock', 'Failed to refresh status clock: ' .. tostring(err))
+    end
+    schedule_status_clock_tick()
+  end)
+end
+
+local function start_status_clock()
+  if status_clock_started then
+    return
+  end
+  status_clock_started = true
+  if wezterm.GLOBAL then
+    wezterm.GLOBAL.status_clock_generation = status_clock_generation
+  end
+  schedule_status_clock_tick()
 end
 
 local function refresh_after_overlay_delay(window, delay_seconds)
@@ -1683,13 +1907,19 @@ wezterm.on('user-var-changed', function(window, pane, name, value)
   if pane_snapshot_cache[pane_id] then
     pane_snapshot_cache[pane_id].last_update = 0
   end
+  pane_refresh_pending[pane_id] = nil
+  pane_refresh_pending_since[pane_id] = nil
+  refresh_window_status(window, pane)
 end)
 
 wezterm.on('window-focus-changed', function(window, pane)
   clear_status_interval_override(window)
+  start_status_clock()
+  refresh_window_status(window, pane)
 end)
 
 wezterm.on('update-status', function(window, pane)
+  start_status_clock()
   refresh_window_status(window, pane)
 end)
 
@@ -1748,6 +1978,26 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   return result
 end)
 
+local function refresh_spawned_window_status(mux_window, pane, delay_seconds)
+  if not mux_window or not pane then
+    return
+  end
+  wezterm.time.call_after(delay_seconds, function()
+    local ok, err = pcall(function()
+      local ok_gui, gui_window = pcall(mux_window.gui_window, mux_window)
+      if ok_gui and gui_window and refresh_window_status then
+        refresh_window_status(gui_window, pane)
+      end
+    end)
+    if not ok then
+      log_warn_rate_limited(
+        'startup-status-refresh',
+        'Failed to refresh startup status: ' .. tostring(err)
+      )
+    end
+  end)
+end
+
 -- Startup window position is loaded from local configuration unless WezTerm
 -- already supplied explicit startup args.
 
@@ -1761,7 +2011,10 @@ wezterm.on('gui-startup', function(cmd)
   if spawn.position == nil then
     spawn.position = clamp_window_position(get_configured_window_position())
   end
-  wezterm.mux.spawn_window(spawn)
+  local _, pane, mux_window = wezterm.mux.spawn_window(spawn)
+  start_status_clock()
+  refresh_spawned_window_status(mux_window, pane, 0.10)
+  refresh_spawned_window_status(mux_window, pane, 0.40)
 end)
 return config
 
