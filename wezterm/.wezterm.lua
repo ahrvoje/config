@@ -421,7 +421,9 @@ local function get_process_name_fullname_cwd_pid_time_argv(pane)
   p_name, f_name, cwd, pid, process_time, argv =
     query_process_name_fullname_cwd_pid_time_argv(pane)
   if not p_name or not f_name then
-    return
+    -- Transient query failure: keep the last-known value (any age) so status
+    -- and tab title hold steady instead of blanking for a tick.
+    return get_cached_process_info(pane)
   end
   cache_process_info(pane, p_name, f_name, cwd, pid, process_time, argv)
   return p_name, f_name, cwd, pid, process_time, argv
@@ -1245,7 +1247,11 @@ refresh_after_overlay_close = function(window)
 end
 
 wezterm.on('user-var-changed', function(window, pane)
-  clear_pane_status_cache(pane)
+  -- Shell integration emits user-vars often (clink fires on every prompt begin
+  -- and submit). Only a repaint is needed here: indicators read user-vars fresh
+  -- and the tab-title cache keys on the process name. Nilling process_info_cache
+  -- would force a synchronous get_foreground_process_info on the next paint,
+  -- twice per prompt; let its 1s TTL refresh it instead.
   refresh_window_status(window, pane)
 end)
 
@@ -1306,6 +1312,42 @@ local icons_names = {
   nu         = { wezterm.nerdfonts.md_chevron_right, 'Nu' },
   zsh        = { wezterm.nerdfonts.md_percent,       'zsh' },
 }
+
+-- Tab-title flicker guard: a foreground process name must persist for
+-- tab_title_settle_seconds before it replaces the name shown on the tab, so a
+-- short-lived command (git, ls, a sub-second build step) never flips the title.
+-- Re-evaluated on each redraw and self-correcting: no timers, no callbacks.
+local tab_title_settle_seconds = 1.0
+local tab_title_settle = {}
+
+local function clock_seconds()
+  local ok, t = pcall(function()
+    return tonumber(wezterm.time.now():format_utc('%s%.3f'))
+  end)
+  return ok and t or os.time()
+end
+
+local function settle_tab_title_name(pane_id, name)
+  local state = tab_title_settle[pane_id]
+  if not state then
+    tab_title_settle[pane_id] = { shown = name }
+    return name
+  end
+  if name == state.shown then
+    state.pending = nil
+    return state.shown
+  end
+  if name ~= state.pending then
+    state.pending = name
+    state.pending_since = clock_seconds()
+  elseif clock_seconds() - (state.pending_since or 0) >= tab_title_settle_seconds then
+    state.shown = name
+    state.pending = nil
+    return name
+  end
+  return state.shown
+end
+
 local function get_tab_title_text(pane)
   local pane_id = get_pane_cache_id(pane)
   if not pane_id then
@@ -1316,6 +1358,7 @@ local function get_tab_title_text(pane)
   if not name or name == '' then
     return nil
   end
+  name = settle_tab_title_name(pane_id, name)
   local cached = tab_title_cache[pane_id]
   if cached and cached.name == name and cached.pane_title == pane_title then
     return cached.text
@@ -1335,11 +1378,16 @@ wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_wid
   local ok, result = pcall(get_tab_title_text, tab.active_pane)
   if not ok then
     log_warn_rate_limited('tab-title', 'Failed to format tab title: ' .. tostring(result))
-    local pane_id = get_pane_cache_id(tab.active_pane)
-    local cached = pane_id and tab_title_cache[pane_id] or nil
-    return cached and cached.text or nil
+    result = nil
   end
-  return result
+  if result ~= nil then
+    return result
+  end
+  -- Error or transient empty name: hold the last good title instead of
+  -- dropping to WezTerm's default for a tick.
+  local pane_id = get_pane_cache_id(tab.active_pane)
+  local cached = pane_id and tab_title_cache[pane_id] or nil
+  return cached and cached.text or nil
 end)
 
 local function refresh_spawned_window_status(mux_window, pane, delay_seconds)
