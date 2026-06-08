@@ -294,8 +294,12 @@ local function get_mux_pane(pane)
   if not pane then
     return nil
   end
-  if type(pane.mux_pane) == 'function' then
-    local ok, mux_pane = pcall(pane.mux_pane, pane)
+  -- A GUI Pane returns nil for unknown fields, but a PaneInformation (e.g. the
+  -- tab.active_pane passed to format-tab-title) raises on any unknown field, so
+  -- probe the optional mux_pane() accessor defensively before calling it.
+  local ok_field, mux_pane_accessor = pcall(function() return pane.mux_pane end)
+  if ok_field and type(mux_pane_accessor) == 'function' then
+    local ok, mux_pane = pcall(mux_pane_accessor, pane)
     if ok and mux_pane then
       return mux_pane
     end
