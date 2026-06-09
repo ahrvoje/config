@@ -1004,6 +1004,8 @@ end
 
 local battery_cache = { data = nil, last_update = 0 }
 local tab_title_cache = {}
+local tab_title_settle = {}
+local display_cwd_cache = {}
 local refresh_window_status
 
 local function safe_method(object, method, fallback, expected_type)
@@ -1031,19 +1033,38 @@ local function get_pane_user_vars(pane)
   return {}
 end
 
+-- For panes without OSC 7/9;9 cwd reporting, get_current_working_dir falls
+-- back to a full process snapshot on Windows, so throttle it to the same ~1s
+-- cadence as the process-info cache. Hold the last-known value on transient
+-- failures; user-var-changed invalidates the entry so shell-integrated panes
+-- still update instantly at the prompt.
 local function get_display_cwd(pane, process_cwd)
+  local pane_id = get_pane_cache_id(pane)
+  local now = os.time()
+  local cached = pane_id ~= nil and display_cwd_cache[pane_id] or nil
+  if cached and now - cached.last_update < 1 then
+    return cached.value
+  end
+  local value
   if pane and type(pane.get_current_working_dir) == 'function' then
     local ok, cwd = pcall(pane.get_current_working_dir, pane)
     if ok and cwd then
       if type(cwd) == 'string' then
-        return normalize_path(cwd)
+        value = normalize_path(cwd)
       elseif cwd.file_path then
-        return normalize_path(cwd.file_path)
+        value = normalize_path(cwd.file_path)
+      else
+        value = normalize_path(tostring(cwd))
       end
-      return normalize_path(tostring(cwd))
     end
   end
-  return normalize_path(process_cwd)
+  if not value or value == '' then
+    value = (cached and cached.value ~= '' and cached.value) or normalize_path(process_cwd)
+  end
+  if pane_id ~= nil then
+    display_cwd_cache[pane_id] = { value = value, last_update = now }
+  end
+  return value
 end
 
 local function append_format_item(items, color, text)
@@ -1227,6 +1248,8 @@ local function clear_pane_status_cache(pane)
   end
   process_info_cache[pane_id] = nil
   tab_title_cache[pane_id] = nil
+  tab_title_settle[pane_id] = nil
+  display_cwd_cache[pane_id] = nil
 end
 
 local function refresh_after_overlay_delay(window, delay_seconds)
@@ -1256,6 +1279,11 @@ wezterm.on('user-var-changed', function(window, pane)
   -- and the tab-title cache keys on the process name. Nilling process_info_cache
   -- would force a synchronous get_foreground_process_info on the next paint,
   -- twice per prompt; let its 1s TTL refresh it instead.
+  local pane_id = get_pane_cache_id(pane)
+  if pane_id ~= nil then
+    -- cwd likely changed at the prompt; this entry is cheap to refill
+    display_cwd_cache[pane_id] = nil
+  end
   refresh_window_status(window, pane)
 end)
 
@@ -1263,8 +1291,33 @@ wezterm.on('window-focus-changed', function(window, pane)
   refresh_window_status(window, pane)
 end)
 
+-- Pane ids are never reused, so per-pane cache entries for closed panes would
+-- otherwise accumulate forever; sweep them at most once per 5 minutes.
+local cache_prune_interval_seconds = 300
+local last_cache_prune = os.time()
+
+local function prune_dead_pane_cache_entries()
+  local live = {}
+  for _, cache in ipairs { process_info_cache, display_cwd_cache, tab_title_cache, tab_title_settle } do
+    for pane_id in pairs(cache) do
+      if live[pane_id] == nil then
+        local ok, mux_pane = pcall(wezterm.mux.get_pane, pane_id)
+        live[pane_id] = (ok and mux_pane ~= nil) or false
+      end
+      if not live[pane_id] then
+        cache[pane_id] = nil
+      end
+    end
+  end
+end
+
 wezterm.on('update-status', function(window, pane)
   refresh_window_status(window, pane)
+  local now = os.time()
+  if now - last_cache_prune >= cache_prune_interval_seconds then
+    last_cache_prune = now
+    prune_dead_pane_cache_entries()
+  end
 end)
 
 local function get_pane_title_text(pane)
@@ -1322,7 +1375,6 @@ local icons_names = {
 -- short-lived command (git, ls, a sub-second build step) never flips the title.
 -- Re-evaluated on each redraw and self-correcting: no timers, no callbacks.
 local tab_title_settle_seconds = 1.0
-local tab_title_settle = {}
 
 local function clock_seconds()
   local ok, t = pcall(function()
