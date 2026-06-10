@@ -3,6 +3,11 @@
 
 right_format = "$time $cmd_duration"
 
+# Inserts a blank line between shell prompts
+# NOTE: must stay above the first [table] header to remain a top-level key,
+# otherwise it is parsed as a key of that table and silently ignored
+add_newline = false
+
 # [directory]
 # disabled = true
 
@@ -11,9 +16,6 @@ right_format = "$time $cmd_duration"
 
 [line_break]
 disabled = true
-
-# Inserts a blank line between shell prompts
-add_newline = false
 
 # Replace the '❯' symbol in the prompt with '➜'
 [character]

@@ -19,6 +19,8 @@ add-zsh-hook zshexit _z_wez_zshexit
 
 # special Windows-specific cases for msys64/usr/bin/zsh.exe
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$MSYSTEM" != "" || "$WSL_DISTRO_NAME" != "" ]]; then
+  zmodload zsh/terminfo 2>/dev/null
+
   for map in emacs viins; do
     # Home key
     bindkey -M $map '^[[H'  beginning-of-line     # ESC [ H
@@ -36,14 +38,20 @@ if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$MSYSTEM" != "" || "$WSL_DI
     bindkey -M $map '^[[6~' down-line-or-history  # PageDown
 
     # Insert key
-    zmodload zsh/terminfo 2>/dev/null || true
-    bindkey -M $map "${terminfo[kich1]-'^[[2~'}" overwrite-mode
+    bindkey -M $map "${terminfo[kich1]:-^[[2~}" overwrite-mode
   done
-  
+
   # normalize git conventions matching GitHub Desktop for Windows
-  git config --global core.autocrlf true
-  git config --global core.filemode false
-  git config --global core.ignorecase true
+  # only when missing — otherwise three git spawns + config rewrites per shell
+  () {
+    local cfg=
+    [[ -r $HOME/.gitconfig ]] && cfg="$(<$HOME/.gitconfig)"
+    if [[ $cfg != *"autocrlf = true"* || $cfg != *"filemode = false"* || $cfg != *"ignorecase = true"* ]]; then
+      git config --global core.autocrlf true
+      git config --global core.filemode false
+      git config --global core.ignorecase true
+    fi
+  }
 fi
 
 # History file and size
@@ -51,9 +59,12 @@ HISTFILE=$HOME/.zsh_history
 HISTSIZE=100000
 SAVEHIST=100000
 
-# Keep a history of visited directories
-autoload -Uz add-zsh-hook
+setopt INC_APPEND_HISTORY  # write each command as it runs, not only on shell exit
+setopt HIST_FCNTL_LOCK     # lock HISTFILE during writes; safe across parallel panes
+setopt HIST_IGNORE_DUPS    # skip command repeated back-to-back
+setopt HIST_REDUCE_BLANKS  # strip superfluous whitespace
 
+# Keep a history of visited directories
 DIRSTACKFILE="$HOME/.zdirs"  # dirs stack persistent across sessions
 if [[ -f "$DIRSTACKFILE" ]] && (( ${#dirstack} == 0 )); then
 	dirstack=("${(@f)"$(< "$DIRSTACKFILE")"}")
@@ -90,8 +101,8 @@ alias ...="cd ../.."
 alias ....="cd ../../.."
 alias .....="cd ../../../.."
 
-# use eza instead of ls
-alias ls='eza -1laa'
+# use eza instead of ls (keep plain ls if eza is missing)
+(( $+commands[eza] )) && alias ls='eza -1laa'
 
 # Prompt before overwrite
 alias rm='rm -i'
@@ -206,4 +217,32 @@ zle -N fzf_history_search
 bindkey -M emacs '^[r' fzf_history_search
 bindkey -M viins '^[r' fzf_history_search
 
-eval "$(starship init zsh)"
+# starship, init cached to avoid a starship spawn on every shell start
+if (( $+commands[starship] )); then
+  _starship_init=${XDG_CACHE_HOME:-$HOME/.cache}/starship-init.zsh
+  if [[ ! -s $_starship_init || $commands[starship] -nt $_starship_init ]]; then
+    mkdir -p -- "${_starship_init:h}"
+    starship init zsh --print-full-init >| "$_starship_init"
+  fi
+  # regenerate once if a stale or foreign-environment cache fails to source
+  if ! source "$_starship_init"; then
+    starship init zsh --print-full-init >| "$_starship_init"
+    source "$_starship_init"
+  fi
+  unset _starship_init
+fi
+
+# show active python venv at the start of the prompt, e.g. "(myenv) "
+export VIRTUAL_ENV_DISABLE_PROMPT=1  # venv activate must not edit PS1 itself
+_venv_prompt() {
+  if [[ -n $VIRTUAL_ENV ]]; then
+    local name=${VIRTUAL_ENV:t}
+    # generic dir names tell nothing, show the project dir instead
+    [[ $name == (.venv|venv) ]] && name=${VIRTUAL_ENV:h:t}
+    psvar[1]="($name) "
+  else
+    psvar[1]=
+  fi
+}
+add-zsh-hook precmd _venv_prompt
+PROMPT="%B%F{11}%1v%f%b$PROMPT"
