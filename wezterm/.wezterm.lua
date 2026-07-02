@@ -236,8 +236,11 @@ local function file_exists(path)
 end
 
 -- Resolve the scripting binary robustly across native installs, macOS app
--- bundles, and Linux AppImage launches.
-local function get_wezterm_cli_executable()
+-- bundles, and Linux AppImage launches. Resolved once and memoized: the
+-- answer cannot change within a session and the probe does file I/O.
+local wezterm_cli_executable_cache
+
+local function resolve_wezterm_cli_executable()
   local procinfo = wezterm.procinfo
   if procinfo and type(procinfo.pid) == 'function' and type(procinfo.executable_path_for_pid) == 'function' then
     local ok_pid, pid = pcall(procinfo.pid)
@@ -267,6 +270,13 @@ local function get_wezterm_cli_executable()
     return fallback
   end
   return is_windows and 'wezterm.exe' or 'wezterm'
+end
+
+local function get_wezterm_cli_executable()
+  if not wezterm_cli_executable_cache then
+    wezterm_cli_executable_cache = resolve_wezterm_cli_executable()
+  end
+  return wezterm_cli_executable_cache
 end
 
 -- normalize windows path by stripping URI scheme
@@ -367,9 +377,10 @@ end
 
 local process_info_cache = {}
 
--- Interactive key handling wants fresh process state; status rendering can
--- safely reuse a same-second cache to avoid repeated foreground-process lookups
--- without visibly freezing the elapsed timer.
+-- Destructive key actions (exit shell, kill process) want fresh process state;
+-- status rendering and high-frequency keys (Esc, arrows, Ctrl-l) reuse a
+-- same-second cache so no synchronous foreground-process lookup lands on the
+-- keystroke path, without visibly freezing the elapsed timer.
 
 local function query_process_name_fullname_cwd_pid_time_argv(pane)
   local mux_pane = get_mux_pane(pane)
@@ -442,12 +453,13 @@ end
 --   https://github.com/wez/wezterm/issues/562#issuecomment-803440418
 --   https://github.com/wez/wezterm/issues/843
 
+local shells = {
+  cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6,
+  wslhost = 7, nu = 8, fish = 9, sh = 10, ksh = 11, dash = 12,
+}
+
 local function get_shell(process_name, fullname, argv)
   if not process_name or not fullname then return end
-  local shells = {
-    cmd = 1, bash = 2, powershell = 3, pwsh = 4, zsh = 5, tmux = 6,
-    wslhost = 7, nu = 8, fish = 9, sh = 10, ksh = 11, dash = 12,
-  }
   if process_name == 'bash' and fullname:match('git') then
     return 'gitbash'
   end
@@ -486,9 +498,11 @@ local function get_pane_process_context(pane, allow_cached_fallback)
   return p_name, f_name, cwd, pid, process_time, argv, get_shell(p_name, f_name, argv)
 end
 
+-- Cache-first (1s TTL): used on hot key paths (Esc, Home/Up/Down, Ctrl-l)
+-- where a synchronous process lookup would add per-keystroke latency.
 local function get_pane_shell(pane)
-  local _, _, _, _, _, _, shell = get_pane_process_context(pane, true)
-  return shell
+  local p_name, f_name, _, _, _, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
+  return get_shell(p_name, f_name, argv)
 end
 
 --------------CONTEXT-AWARE KEY ACTIONS--------------
@@ -594,7 +608,7 @@ local action_down = choose_action(pane_has_shell, send_key('DownArrow'), act.Scr
 -- Clear screen action
 
 local action_clear_screen = function(window, pane)
-  local _, _, _, _, _, _, shell = get_pane_process_context(pane, true)
+  local shell = get_pane_shell(pane)
   window:perform_action(powershell_shells[shell] and act.SendString 'clear\r' or send_key('l', 'CTRL'), pane)
 end
 
@@ -777,7 +791,10 @@ local clear_powershell_line = act.Multiple{
 }
 
 local action_Esc = function(window, pane)
-  local process_name, _, _, _, _, _, shell = get_pane_process_context(pane, true)
+  -- Cache-first: Esc fires constantly (e.g. inside Neovim); a fresh
+  -- foreground-process query here would cost a process snapshot per keypress.
+  local process_name, fullname, _, _, _, argv = get_process_name_fullname_cwd_pid_time_argv(pane)
+  local shell = get_shell(process_name, fullname, argv)
   if window:leader_is_active() then
     window:perform_action(plain_escape, pane)
   elseif not process_name then
@@ -1141,7 +1158,8 @@ local function format_elapsed_time(process_time)
   end
   local elapsed_seconds = math.max(0, os.time() - process_time)
   local days = math.floor(elapsed_seconds / 86400)
-  local ok, time_text = pcall(os.date, '!%X', elapsed_seconds)
+  -- Explicit %H:%M:%S: %X is locale-dependent and can render 12-hour formats.
+  local ok, time_text = pcall(os.date, '!%H:%M:%S', elapsed_seconds)
   if not ok or type(time_text) ~= 'string' then
     time_text = '00:00:00'
   end
@@ -1152,7 +1170,7 @@ local function get_pane_start_time(process_time)
   if not process_time then
     return '------------------------------'
   end
-  local ok, date_text = pcall(os.date, '%b %d %X', process_time)
+  local ok, date_text = pcall(os.date, '%b %d %H:%M:%S', process_time)
   if not ok or type(date_text) ~= 'string' then
     return '------------------------------'
   end
@@ -1404,19 +1422,33 @@ local function settle_tab_title_name(pane_id, name)
   return state.shown
 end
 
+-- Reuse window for finished tab titles: the tab bar repaints several times a
+-- second (the right-status timer invalidates it), and resolving the foreground
+-- process name runs for every tab on each repaint. Within this window an
+-- unchanged pane title short-circuits that lookup; a pane-title change (e.g.
+-- entering copy mode) still busts the entry immediately. Worst-case title
+-- switch delay is tab_title_settle_seconds + tab_title_reuse_seconds.
+local tab_title_reuse_seconds = 0.5
+
 local function get_tab_title_text(pane)
   local pane_id = get_pane_cache_id(pane)
   if not pane_id then
     return nil
   end
   local pane_title = type(pane.title) == 'string' and pane.title or get_pane_title_text(pane)
+  local cached = tab_title_cache[pane_id]
+  local now = clock_seconds()
+  if cached and cached.pane_title == pane_title
+      and now - (cached.last_update or 0) < tab_title_reuse_seconds then
+    return cached.text
+  end
   local name = get_tab_title_process_name(pane)
   if not name or name == '' then
     return nil
   end
   name = settle_tab_title_name(pane_id, name)
-  local cached = tab_title_cache[pane_id]
   if cached and cached.name == name and cached.pane_title == pane_title then
+    cached.last_update = now
     return cached.text
   end
   local title_prefix = pane_title:match('Copy mode:') and 'Copy mode: ' or ''
@@ -1426,6 +1458,7 @@ local function get_tab_title_text(pane)
     name = name,
     pane_title = pane_title,
     text = text,
+    last_update = now,
   }
   return text
 end
