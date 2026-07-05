@@ -4,6 +4,7 @@
 
 # set terminal UserVar 'zsh' to 'on'/'off' on enter/exit
 set_user_var() {
+  [[ -n $WEZTERM_PANE ]] || return  # avoid garbling terminals that don't understand OSC 1337
   if [ -n "$TMUX" ]; then
     printf '\033Ptmux;\033]1337;SetUserVar=%s=%s\007\033\\' "$1" "$2"
   else
@@ -40,8 +41,11 @@ if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$MSYSTEM" != "" || "$WSL_DI
     # Insert key
     bindkey -M $map "${terminfo[kich1]:-^[[2~}" overwrite-mode
   done
+fi
 
-  # normalize git conventions matching GitHub Desktop for Windows
+# normalize git conventions matching GitHub Desktop for Windows
+# msys/cygwin only — NOT WSL, where autocrlf/filemode would mangle a native Linux checkout
+if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || -n "$MSYSTEM" ]]; then
   # only when missing — otherwise three git spawns + config rewrites per shell
   () {
     local cfg=
@@ -59,9 +63,10 @@ HISTFILE=$HOME/.zsh_history
 HISTSIZE=100000
 SAVEHIST=100000
 
-setopt INC_APPEND_HISTORY  # write each command as it runs, not only on shell exit
+setopt SHARE_HISTORY       # write each command as it runs and pull in new ones from other panes (implies INC_APPEND_HISTORY)
 setopt HIST_FCNTL_LOCK     # lock HISTFILE during writes; safe across parallel panes
 setopt HIST_IGNORE_DUPS    # skip command repeated back-to-back
+setopt HIST_IGNORE_SPACE   # skip commands starting with a space
 setopt HIST_REDUCE_BLANKS  # strip superfluous whitespace
 
 # Keep a history of visited directories
@@ -71,7 +76,9 @@ if [[ -f "$DIRSTACKFILE" ]] && (( ${#dirstack} == 0 )); then
 	[[ -d "${dirstack[1]}" ]] && cd -- "${dirstack[1]}"
 fi
 chpwd_dirstack() {
-	print -l -- "$PWD" "${(u)dirstack[@]}" > "$DIRSTACKFILE"
+	# write-then-rename avoids interleaved/corrupted content when multiple panes cd concurrently
+	local tmp="$DIRSTACKFILE.$$"
+	print -l -- "$PWD" "${(u)dirstack[@]}" > "$tmp" && mv -f -- "$tmp" "$DIRSTACKFILE"
 }
 add-zsh-hook -Uz chpwd chpwd_dirstack
 
@@ -121,14 +128,31 @@ alias gd='git diff'
 alias gs='git status'
 alias grep='grep -i --color=auto'
 
+# completion system, cached dump skips the compaudit security scan on every start
+# (on WSL, also set `skip_global_compinit=1` in ~/.zshenv so /etc/zsh/zshrc's own
+# uncached compinit doesn't run first and pay that cost anyway)
+autoload -Uz compinit
+_zcompdump=${XDG_CACHE_HOME:-$HOME/.cache}/zcompdump
+mkdir -p -- "${_zcompdump:h}"
+if [[ -s $_zcompdump ]]; then
+  compinit -C -d "$_zcompdump"
+else
+  compinit -d "$_zcompdump"
+fi
+unset _zcompdump
+
 # fzf
 # invoke config if exists
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
 fzf_root=/
+fzf_skip=.git,node_modules  # fzf's own default skip list
 # special Windows-specific cases for msys64/usr/bin/zsh.exe
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || -n "$MSYSTEM" ]]; then
   fzf_root=(C:/ D:/)
+  # whole-drive walk: skip huge system trees, and never follow symlinks —
+  # Windows junctions (e.g. AppData\Local\Application Data) can self-loop and hang the walker
+  fzf_skip="$fzf_skip,AppData,Windows,ProgramData,\$RECYCLE.BIN,System Volume Information"
 fi
 
 fzf_find_file_local() {
@@ -162,8 +186,9 @@ fzf_find_file_global() {
   file="$(
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
-          --walker=file,hidden,follow \
-          --walker-root="${fzf_root[@]}" </dev/tty \
+          --walker=file,hidden \
+          --walker-root="${fzf_root[@]}" \
+          --walker-skip="$fzf_skip" </dev/tty \
           --preview 'bat --style=numbers --color=always --line-range :200 {} || file -b {}' \
           --preview-window=right:50%
   )" || return
@@ -182,8 +207,9 @@ fzf_cd() {
   dir="$(
     env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
-        --walker=dir,hidden,follow \
+        --walker=dir,hidden \
         --walker-root="${fzf_root[@]}" \
+        --walker-skip="$fzf_skip" \
         --prompt='cd> ' \
         --preview 'ls -la {} 2>/dev/null || echo "{}"' \
         --preview-window=right:50%:wrap \
