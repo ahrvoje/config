@@ -1,0 +1,4 @@
+# zsh files are deployed by straight copy into Linux (WSL) and msys64 homes;
+# CRLF there puts \r into function names and redirect targets, silently
+# breaking the shell — force LF regardless of core.autocrlf.
+zsh/** text eol=lf

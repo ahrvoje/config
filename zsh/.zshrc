@@ -4,15 +4,22 @@
 
 # set terminal UserVar 'zsh' to 'on'/'off' on enter/exit
 set_user_var() {
-  [[ -n $WEZTERM_PANE ]] || return  # avoid garbling terminals that don't understand OSC 1337
-  if [ -n "$TMUX" ]; then
-    printf '\033Ptmux;\033]1337;SetUserVar=%s=%s\007\033\\' "$1" "$2"
-  else
-    printf '\033]1337;SetUserVar=%s=%s\007' "$1" "$2"
-  fi
+  # WEZTERM_PANE doesn't cross the wsl.exe boundary unless WSLENV forwards it,
+  # so inside WSL emit unconditionally; other terminals ignore unknown OSC
+  [[ -n $WEZTERM_PANE || -n $WSL_DISTRO_NAME ]] || return 0
+  # write to the tty, not stdout: callers may run inside $(...) captures;
+  # silently skip when there is no tty (e.g. pane already torn down on exit)
+  {
+    if [ -n "$TMUX" ]; then
+      printf '\033Ptmux;\033]1337;SetUserVar=%s=%s\007\033\\' "$1" "$2"
+    else
+      printf '\033]1337;SetUserVar=%s=%s\007' "$1" "$2"
+    fi
+  } 2>/dev/null >/dev/tty
 }
 # on start    base64('on') = 'b24='
 set_user_var zsh b24=
+set_user_var fzf b2Zm  # clear a stale fzf flag left by a previous process in this pane
 autoload -Uz add-zsh-hook
 # on exit     base64('off') = 'b2Zm'
 _z_wez_zshexit() { set_user_var zsh b2Zm }
@@ -153,7 +160,28 @@ if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || -n "$MSYSTEM" ]]; then
   # whole-drive walk: skip huge system trees, and never follow symlinks —
   # Windows junctions (e.g. AppData\Local\Application Data) can self-loop and hang the walker
   fzf_skip="$fzf_skip,AppData,Windows,ProgramData,\$RECYCLE.BIN,System Volume Information"
+elif [[ -n "$WSL_DISTRO_NAME" ]]; then
+  # keep the walk on the Linux filesystem: /mnt/* drives go over 9P (painfully
+  # slow), /proc and /sys are bottomless; use the msys zsh for Windows drives.
+  # NOTE: skips match directory NAMES anywhere, so a repo dir literally named
+  # e.g. 'sys' is skipped too — acceptable for a global search.
+  fzf_skip="$fzf_skip,mnt,proc,sys,dev,run,snap,tmp"
 fi
+
+# Flag 'fzf is running' via user var while fzf owns the pane, so wezterm routes
+# Esc/PageUp/PageDown to fzf. Needed because wezterm's process detection cannot
+# see through wslhost/msys interop to know fzf is in the foreground, and fzf in
+# --height mode never enters the alternate screen wezterm otherwise keys off.
+_fzf_with_var() {
+  set_user_var fzf b24=   # base64('on')
+  "$@"
+  local rc=$?
+  set_user_var fzf b2Zm   # base64('off')
+  return $rc
+}
+# cover fzf runs this config doesn't own (~/.fzf.zsh widgets, manual CLI use);
+# the widgets below invoke fzf via `env`, which bypasses this function wrapper
+fzf() { _fzf_with_var command fzf "$@" }
 
 fzf_find_file_local() {
   local file
@@ -162,7 +190,7 @@ fzf_find_file_local() {
   # </dev/tty forces TTY stdin so fzf uses its walker
   # ignore any default FZF_ commands
   file="$(
-    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+    _fzf_with_var env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
           --walker=file,hidden,follow \
           --walker-root=. </dev/tty \
@@ -184,7 +212,7 @@ fzf_find_file_global() {
   # </dev/tty forces TTY stdin so fzf uses its walker
   # ignore any default FZF_ commands
   file="$(
-    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+    _fzf_with_var env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
           --walker=file,hidden \
           --walker-root="${fzf_root[@]}" \
@@ -205,7 +233,7 @@ fzf_cd() {
   zle -I  # let full-screen UI take the TTY
 
   dir="$(
-    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+    _fzf_with_var env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf -i --height=80% --reverse --border \
         --walker=dir,hidden \
         --walker-root="${fzf_root[@]}" \
@@ -229,7 +257,7 @@ fzf_history_search() {
 
   # Use newest-first, no numbers: much faster and no parsing needed
   cmd="$(
-    env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
+    _fzf_with_var env -u FZF_DEFAULT_COMMAND -u FZF_CTRL_T_COMMAND -u FZF_ALT_C_COMMAND \
       fzf --height=80% --reverse --border \
         --prompt='history> ' --no-sort \
         --query "$LBUFFER" \

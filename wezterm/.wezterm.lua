@@ -160,6 +160,13 @@ if is_windows then
   -- Keep CRLF paste behavior for cmd.exe/PowerShell, but let Unix platforms use
   -- their native/default newline handling.
   config.canonicalize_pasted_newlines = 'CarriageReturnAndLineFeed'
+  -- wsl.exe strips Windows env vars from the guest unless WSLENV forwards
+  -- them; forward WEZTERM_PANE so WSL shells can detect they run in wezterm
+  -- (zsh keys its OSC 1337 user-var emission off it)
+  local wslenv = os.getenv('WSLENV')
+  config.set_environment_variables = {
+    WSLENV = (wslenv and wslenv ~= '' and wslenv .. ':' or '') .. 'WEZTERM_PANE/u',
+  }
 end
 config.check_for_updates = false
 config.disable_default_key_bindings = true
@@ -587,14 +594,27 @@ local function pane_is_alt_screen(pane)
   return pane:is_alt_screen_active()
 end
 
+-- fzf (zsh/.zshrc widgets) runs with --height, so it never enters the alt
+-- screen, and process detection can't see it through wslhost/msys interop.
+-- The zsh side flags it via OSC 1337 user var while fzf owns the pane;
+-- get_user_vars is an in-memory read, safe on per-keystroke paths.
+local function pane_fzf_active(pane)
+  local ok, user_vars = pcall(pane.get_user_vars, pane)
+  return ok and type(user_vars) == 'table' and user_vars.fzf == 'on'
+end
+
+local function pane_wants_raw_nav_keys(pane)
+  return pane_is_alt_screen(pane) or pane_fzf_active(pane)
+end
+
 local function pane_has_shell(pane)
   return get_pane_shell(pane) ~= nil
 end
 
-local action_ctrl_home = choose_action(pane_is_alt_screen, send_key('Home', 'CTRL'), act.ScrollToTop)
-local action_ctrl_end = choose_action(pane_is_alt_screen, send_key('End', 'CTRL'), act.ScrollToBottom)
-local action_pageup = choose_action(pane_is_alt_screen, act.SendString '\x1b[5~', act.ScrollByPage(-0.5))
-local action_pagedown = choose_action(pane_is_alt_screen, act.SendString '\x1b[6~', act.ScrollByPage(0.5))
+local action_ctrl_home = choose_action(pane_wants_raw_nav_keys, send_key('Home', 'CTRL'), act.ScrollToTop)
+local action_ctrl_end = choose_action(pane_wants_raw_nav_keys, send_key('End', 'CTRL'), act.ScrollToBottom)
+local action_pageup = choose_action(pane_wants_raw_nav_keys, act.SendString '\x1b[5~', act.ScrollByPage(-0.5))
+local action_pagedown = choose_action(pane_wants_raw_nav_keys, act.SendString '\x1b[6~', act.ScrollByPage(0.5))
 
 -- 'Home'/'Up'/'Down' have two roles:
 --   Send the usual line-start/history keys if a shell prompt is active
@@ -797,6 +817,10 @@ local action_Esc = function(window, pane)
   local shell = get_shell(process_name, fullname, argv)
   if window:leader_is_active() then
     window:perform_action(plain_escape, pane)
+  elseif pane_fzf_active(pane) then
+    -- explicit signal from the zsh fzf wrappers — the heuristics below can't
+    -- see fzf through wslhost/msys, and line_is_empty misreads fzf's border
+    window:perform_action(fzf_escape, pane)
   elseif not process_name then
     window:perform_action(plain_escape, pane)
     if refresh_after_overlay_close then
