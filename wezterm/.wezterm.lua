@@ -603,8 +603,17 @@ local function pane_fzf_active(pane)
   return ok and type(user_vars) == 'table' and user_vars.fzf == 'on'
 end
 
+-- Clink popups (Rex model/mode chooser, etc.) run inside cmd.exe, so
+-- process detection sees a plain shell and line_is_empty misreads the
+-- popup frame. The clink side flags popup ownership via the same OSC 1337
+-- user-var contract as the zsh fzf wrappers.
+local function pane_clink_popup_active(pane)
+  local ok, user_vars = pcall(pane.get_user_vars, pane)
+  return ok and type(user_vars) == 'table' and user_vars.clink_popup == 'on'
+end
+
 local function pane_wants_raw_nav_keys(pane)
-  return pane_is_alt_screen(pane) or pane_fzf_active(pane)
+  return pane_is_alt_screen(pane) or pane_fzf_active(pane) or pane_clink_popup_active(pane)
 end
 
 local function pane_has_shell(pane)
@@ -799,6 +808,12 @@ end
 local plain_escape = act.SendKey{ key='Escape' }
 local terminal_escape = act.SendKey{ key='[', mods='CTRL' }
 local fzf_escape = act.SendKey{ key='g', mods='CTRL' }
+-- ConPTY holds a bare \x1b as a possible escape-sequence prefix, so a
+-- synthesized plain Escape never reaches console apps as VK_ESCAPE. Encode
+-- the press as explicit win32-input-mode key events (CSI Vk;Sc;Uc;Kd;Cs;Rc _),
+-- which ConPTY translates deterministically into VK_ESCAPE INPUT_RECORDs —
+-- what Clink's popups actually listen for.
+local win32_escape = act.SendString '\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_'
 local clear_shell_line = act.SendString '\x01\x0b'
 local clear_cmd_line = act.Multiple{
   act.SendKey{ key='End',  mods='NONE' },
@@ -821,6 +836,10 @@ local action_Esc = function(window, pane)
     -- explicit signal from the zsh fzf wrappers — the heuristics below can't
     -- see fzf through wslhost/msys, and line_is_empty misreads fzf's border
     window:perform_action(fzf_escape, pane)
+  elseif pane_clink_popup_active(pane) then
+    -- a Clink popup (e.g. Rex selector) owns the pane; an Escape key event
+    -- must reach it instead of the cmd line-clear sequence below
+    window:perform_action(win32_escape, pane)
   elseif not process_name then
     window:perform_action(plain_escape, pane)
     if refresh_after_overlay_close then
