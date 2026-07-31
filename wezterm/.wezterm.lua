@@ -31,8 +31,8 @@ end
 
 local default_config = {
   leader                  = { key = 'q', mods = 'ALT', timeout_milliseconds = 9999 },
-  initial_rows            = 32,
-  initial_cols            = 120,
+  initial_rows            = 35,
+  initial_cols            = 125,
   animation_fps           = 1,
   cursor_blink_ease_in    = 'Constant',
   cursor_blink_ease_out   = 'Constant',
