@@ -649,8 +649,20 @@ function M.extract_response(provider, response)
                 return table.concat(parts), nil, extract_usage(response)
             end
         end
-        -- Truly no content in Anthropic response
+        -- No text blocks. On thinking-by-default models (Claude Opus 5 and
+        -- later) max_tokens caps thinking *and* visible text together, so a
+        -- long reasoning pass can consume the whole budget and leave nothing
+        -- to print. stop_reason tells us which case this is.
+        local reason = response.stop_reason
+        if reason == "max_tokens" then
+            return nil, "Reasoning used the whole max_tokens budget before any "
+                .. "text was produced. Raise it (/set max_tokens 16000) or pick "
+                .. "a lower effort via /mode."
+        elseif reason == "refusal" then
+            return nil, "The model declined this request (stop_reason: refusal)."
+        end
         return nil, "No content in Anthropic response"
+            .. (reason and (" (stop_reason: " .. tostring(reason) .. ")") or "")
     else
         -- OpenAI-compatible: choices[0].message.content
         if response.choices and type(response.choices) == "table" then

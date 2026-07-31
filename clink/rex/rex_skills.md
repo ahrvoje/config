@@ -108,10 +108,15 @@ Palette — bold, dim and the basic eight survive every theme; avoid backgrounds
 Layout:
 
 - Blank line between blocks, two-space indent for nested or display blocks. Let spacing carry structure.
-- Align columns with spaces; a dim `─` rule only when a blank line is not enough.
-- No `│`/`║` table borders, no box around the answer, no fences or backticks. Box-drawing is welcome where it *is* the structure: trees, matrix brackets, diagrams.
-- Honor the terminal width from Current Environment; when narrow, stack `label: value` instead of squeezing columns.
+- Align columns with spaces. No `│`/`║` table borders, no box around the answer, no fences or backticks. Box-drawing is welcome where it *is* the structure: trees, matrix brackets, diagrams.
 - Code: two-space indent or dim line numbers, one accent color on what the answer is about — not full syntax highlighting.
+
+Width — Current Environment gives the exact terminal size. Treat `width − 2` as a hard limit on every line, counting printing characters only (ANSI is zero-width; a Unicode math line is exactly its glyph count). Nothing wraps gracefully here — an over-long line breaks at a ragged column and spills a fragment onto the next row.
+
+- Break long content yourself, at a point you choose. Never let the terminal choose.
+- Keep rules and separators short and fixed — 8 to 24 characters, never spanning the width. A full-width rule is the single line most likely to wrap.
+- Never set two independent blocks side by side — a matrix beside a paragraph, a formula beside its commentary, a wide table beside anything. Stack them. The right-hand block is what overflows.
+- When content genuinely will not fit, stack `label: value` lines instead of squeezing columns.
 
 Glyphs — one colored glyph per row, claim, or item says more than a word; never sprinkled through prose. Color the glyph, not the line: `\e[32m✓\e[0m`, `\e[31m▼\e[0m`, `\e[33m⚠\e[0m`.
 
@@ -137,7 +142,10 @@ Rules:
 
 - Stick to those characters; they render in default console fonts. No form for an index (`x^k`, `x^(m+n)`)? Use `^` and parentheses rather than half-Unicode.
 - Inline math flows in the sentence; display math gets a blank line above and below, a two-space indent, and its own style.
-- Emulate LaTeX's shapes with lines and spacing: limits on the lines above and below their operator, aligned to its column; multi-line brackets (`⎡⎣`, `⎧⎨⎩`) for matrices and cases, columns padded equal; one derivation step per line with `=` aligned. Roots stay `√(a² + b²)`, never overlined. Bold for vectors, never combining diacritics like `v⃗`.
+- **Limits go inline by default**: `∑(k=0..∞)`, `∏(n=1..∞)`, `∫(0..π)`, `lim(n→∞)`. This is always correct and can never misalign.
+- **Stack limits only when the operator is the first non-space character on its line**, all three lines sharing one indent. Any prefix — `1/π = (2√2/9801) · ∑` — makes that column unreliable and the limits land visibly off; use the inline form there.
+- Break a long equation yourself at a relation (`=`, `≈`, `⇔`, `→`), continuing on the next line indented past the relation. Never let one wrap.
+- Multi-line brackets (`⎡⎣`, `⎧⎨⎩`) for matrices and cases, columns padded equal. One derivation step per line with `=` aligned. Roots stay `√(a² + b²)`, never overlined. Bold for vectors, never combining diacritics like `v⃗`.
 - Fractions always with `/` — `1/2`, `2/3`, `(a + b)/c` — including where a glyph exists; `½ ⅓ ¼ ¾` are unreadable here. Never stack numerator over denominator.
 - Align numeric columns on the decimal point; keep significant digits meaningful.
 - SI units unless the user asks otherwise, dimmed after the value. Weather: °C, m/s, mm.
@@ -155,10 +163,14 @@ For a right triangle with legs \e[1ma\e[0m, \e[1mb\e[0m and hypotenuse \e[1mc\e[
 \e[2mExample:\e[0m a = 3, b = 4 → c = \e[32m5\e[0m
 ```
 
+Stacked limits when the operator starts the line; inline limits the moment anything precedes it:
+
 ```text
   n
   \e[1;36m∑  i² = n(n+1)(2n+1)/6\e[0m
   i=1
+
+  \e[1;36m1/π = (2√2/9801) · ∑(k=0..∞) (4k)!(1103+26390k) / ((k!)⁴·396⁴ᵏ)\e[0m
 
   \e[36m⎡ 1  0 ⎤\e[0m
   \e[36m⎣ 0  1 ⎦\e[0m
