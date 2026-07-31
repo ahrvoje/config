@@ -1,12 +1,24 @@
 {
   "mode_sets": {
-    "anthropic_opus_4_6_effort": [
+    "anthropic_effort_full": [
+      {"id": "effort_low",    "label": "Effort: Low",        "params": {"output_config": {"effort": "low"}}},
+      {"id": "effort_medium", "label": "Effort: Medium",     "params": {"output_config": {"effort": "medium"}}},
+      {"id": "effort_high",   "label": "Effort: High",       "params": {"output_config": {"effort": "high"}}},
+      {"id": "effort_xhigh",  "label": "Effort: Extra High", "params": {"output_config": {"effort": "xhigh"}}},
+      {"id": "effort_max",    "label": "Effort: Max",        "params": {"output_config": {"effort": "max"}}}
+    ],
+    "anthropic_effort_no_xhigh": [
       {"id": "effort_low",    "label": "Effort: Low",    "params": {"output_config": {"effort": "low"}}},
       {"id": "effort_medium", "label": "Effort: Medium", "params": {"output_config": {"effort": "medium"}}},
       {"id": "effort_high",   "label": "Effort: High",   "params": {"output_config": {"effort": "high"}}},
       {"id": "effort_max",    "label": "Effort: Max",    "params": {"output_config": {"effort": "max"}}}
     ],
-    "openai_gpt_5_4_reasoning": [
+    "anthropic_effort_basic": [
+      {"id": "effort_low",    "label": "Effort: Low",    "params": {"output_config": {"effort": "low"}}},
+      {"id": "effort_medium", "label": "Effort: Medium", "params": {"output_config": {"effort": "medium"}}},
+      {"id": "effort_high",   "label": "Effort: High",   "params": {"output_config": {"effort": "high"}}}
+    ],
+    "openai_reasoning": [
       {"id": "reasoning_none",   "label": "Reasoning: None",       "params": {"reasoning_effort": "none"}},
       {"id": "reasoning_low",    "label": "Reasoning: Low",        "params": {"reasoning_effort": "low"}},
       {"id": "reasoning_medium", "label": "Reasoning: Medium",     "params": {"reasoning_effort": "medium"}},
@@ -20,27 +32,66 @@
       "match": "claude-opus-4-6",
       "match_type": "contains",
       "capabilities": {"web_search": true},
-      "mode_set": "anthropic_opus_4_6_effort"
+      "mode_set": "anthropic_effort_no_xhigh"
+    },
+    {
+      "provider": "anthropic",
+      "match": "claude-sonnet-4-6",
+      "match_type": "contains",
+      "capabilities": {"web_search": true},
+      "mode_set": "anthropic_effort_no_xhigh"
+    },
+    {
+      "provider": "anthropic",
+      "match": "claude-opus-4-5",
+      "match_type": "contains",
+      "capabilities": {"web_search": true},
+      "mode_set": "anthropic_effort_basic"
+    },
+    {
+      "provider": "anthropic",
+      "match": "claude-sonnet-4-5",
+      "match_type": "contains",
+      "capabilities": {"web_search": true}
+    },
+    {
+      "provider": "anthropic",
+      "match": "claude-haiku",
+      "match_type": "contains",
+      "capabilities": {"web_search": true}
+    },
+    {
+      "provider": "anthropic",
+      "match": "claude-opus-4-1",
+      "match_type": "contains",
+      "capabilities": {"web_search": true}
+    },
+    {
+      "provider": "anthropic",
+      "match": "claude",
+      "match_type": "contains",
+      "capabilities": {"web_search": true},
+      "mode_set": "anthropic_effort_full"
     },
     {
       "provider": "openai",
-      "match": "gpt-5.4",
+      "match": "gpt-5",
       "match_type": "contains",
       "capabilities": {"web_search": false},
-      "mode_set": "openai_gpt_5_4_reasoning"
+      "mode_set": "openai_reasoning"
     },
     {
       "provider": "github",
-      "match": "anthropic/claude-opus-4.6",
+      "match": "openai/gpt-5",
+      "match_type": "contains",
+      "capabilities": {"web_search": false},
+      "mode_set": "openai_reasoning"
+    },
+    {
+      "provider": "github",
+      "match": "anthropic/claude",
       "match_type": "contains",
       "capabilities": {"web_search": false}
-    },
-    {
-      "provider": "github",
-      "match": "openai/gpt-5.4",
-      "match_type": "contains",
-      "capabilities": {"web_search": false},
-      "mode_set": "openai_gpt_5_4_reasoning"
     }
   ]
 }
