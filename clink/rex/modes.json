@@ -26,15 +26,14 @@
       "provider": "openai",
       "match": "gpt-5.4",
       "match_type": "contains",
-      "capabilities": {"web_search": true},
+      "capabilities": {"web_search": false},
       "mode_set": "openai_gpt_5_4_reasoning"
     },
     {
       "provider": "github",
       "match": "anthropic/claude-opus-4.6",
       "match_type": "contains",
-      "capabilities": {"web_search": false},
-      "mode_set": "anthropic_opus_4_6_effort"
+      "capabilities": {"web_search": false}
     },
     {
       "provider": "github",

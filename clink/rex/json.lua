@@ -40,6 +40,15 @@ local function decode_string(s, pos)
                 local hex = s:sub(pos + 1, pos + 4)
                 local code = tonumber(hex, 16)
                 if not code then error("invalid \\u escape") end
+                pos = pos + 4
+                -- Combine a UTF-16 surrogate pair into one code point.
+                if code >= 0xD800 and code <= 0xDBFF and s:sub(pos + 1, pos + 2) == "\\u" then
+                    local lo = tonumber(s:sub(pos + 3, pos + 6), 16)
+                    if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+                        code = 0x10000 + (code - 0xD800) * 0x400 + (lo - 0xDC00)
+                        pos = pos + 6
+                    end
+                end
                 -- Encode code point as UTF-8.
                 if code < 0x80 then
                     buf[#buf + 1] = string.char(code)
@@ -47,13 +56,18 @@ local function decode_string(s, pos)
                     buf[#buf + 1] = string.char(
                         0xC0 + math.floor(code / 64),
                         0x80 + (code % 64))
-                else
+                elseif code < 0x10000 then
                     buf[#buf + 1] = string.char(
                         0xE0 + math.floor(code / 4096),
                         0x80 + math.floor((code % 4096) / 64),
                         0x80 + (code % 64))
+                else
+                    buf[#buf + 1] = string.char(
+                        0xF0 + math.floor(code / 262144),
+                        0x80 + math.floor(code / 4096) % 64,
+                        0x80 + math.floor(code / 64) % 64,
+                        0x80 + (code % 64))
                 end
-                pos = pos + 4
             else
                 error("invalid escape: \\" .. esc)
             end

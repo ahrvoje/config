@@ -20,6 +20,9 @@ local state = {
     model         = nil,  -- selected model ID
     mode          = nil,  -- selected mode ID
     memory        = nil,  -- conversation-memory policy override
+    max_tokens    = nil,  -- session max_tokens override (/set)
+    timeout       = nil,  -- session timeout override (/set)
+    last_answer   = nil,  -- last assistant answer (for /copy)
     history       = {},   -- conversation message history [{role, content}]
     session_path  = nil,  -- path of current recall session file
     session_date  = nil,  -- YYYYMMDD date stamp
@@ -27,6 +30,7 @@ local state = {
     credentials   = nil,  -- parsed credential entries (cache of REX_API_KEY)
     models        = nil,  -- cached model lists keyed by credential ID
     config        = nil,  -- parsed config file contents
+    config_checked = false, -- whether a config-file load has been attempted
     modes_data    = nil,  -- parsed modes.json contents
     skills_text   = nil,  -- loaded rex_skills.md contents
     skills_sections = nil, -- parsed prompt sections from rex_skills.md
@@ -123,10 +127,12 @@ function M.load_config()
 end
 
 function M.get_config()
-    if not state.config then
-        M.load_config()
-    end
-    return state.config
+    if state.config then return state.config end
+    -- Remember that no config file exists so resolve_* calls do not
+    -- re-probe the filesystem on every invocation.
+    if state.config_checked then return nil end
+    state.config_checked = true
+    return M.load_config()
 end
 
 -- ================================================================
@@ -184,13 +190,20 @@ function M.write_config(settings)
         end
     end
 
-    local f = io.open(path, "w")
-    if not f then return false, "Cannot write config file: " .. path end
+    -- Write to a temp file, then swap it in, so a crash mid-write cannot
+    -- leave a truncated config behind.
+    local tmp_path = path .. ".tmp"
+    local f = io.open(tmp_path, "w")
+    if not f then return false, "Cannot write config file: " .. tmp_path end
     f:write(table.concat(lines, "\n") .. "\n")
     f:close()
+    os.remove(path)
+    local ok, rename_err = os.rename(tmp_path, path)
+    if not ok then return false, "Cannot replace config file: " .. tostring(rename_err) end
 
     -- Refresh in-memory config
     state.config = settings
+    state.config_checked = true
     return true
 end
 
@@ -205,8 +218,8 @@ function M.save_current_config()
     settings.model      = state.model or cfg.model
     settings.mode       = state.mode or cfg.mode
     settings.memory     = state.memory or cfg.memory or "all"
-    settings.max_tokens = cfg.max_tokens or 4096
-    settings.timeout    = cfg.timeout or 120
+    settings.max_tokens = state.max_tokens or cfg.max_tokens or 4096
+    settings.timeout    = state.timeout or cfg.timeout or 120
 
     return M.write_config(settings)
 end
@@ -215,23 +228,6 @@ end
 -- Effective setting resolution
 -- Session state -> config file -> built-in defaults
 -- ================================================================
-
-local DEFAULTS = {
-    mode       = "default",
-    memory     = "all",
-    max_tokens = 4096,
-    timeout    = 120,
-}
-
-function M.resolve(key)
-    -- Session state first
-    if state[key] ~= nil then return state[key] end
-    -- Config file second
-    local cfg = M.get_config()
-    if cfg and cfg[key] ~= nil then return cfg[key] end
-    -- Built-in defaults
-    return DEFAULTS[key]
-end
 
 function M.resolve_credential()
     return state.credential or (M.get_config() or {}).credential
@@ -254,12 +250,14 @@ function M.resolve_memory()
 end
 
 function M.resolve_max_tokens()
+    if type(state.max_tokens) == "number" then return state.max_tokens end
     local v = (M.get_config() or {}).max_tokens
     if type(v) == "number" then return v end
     return 4096
 end
 
 function M.resolve_timeout()
+    if type(state.timeout) == "number" then return state.timeout end
     local v = (M.get_config() or {}).timeout
     if type(v) == "number" then return v end
     return 120
@@ -407,7 +405,10 @@ local function parse_skills_sections(text)
         return sections
     end
 
-    for name, body in text:gmatch("<!--%s*REX_SECTION:([%w_%-]+)%s*-->%s*(.-)%s*<!--%s*/REX_SECTION%s*-->") do
+    -- Note: the "--" in HTML comments must be escaped as "%-%-"; a bare
+    -- "-" after "!" is parsed as a lazy quantifier and the pattern never
+    -- matches.
+    for name, body in text:gmatch("<!%-%-%s*REX_SECTION:([%w_%-]+)%s*%-%->%s*(.-)%s*<!%-%-%s*/REX_SECTION%s*%-%->") do
         sections[name] = trim_text(body)
     end
 
@@ -452,11 +453,37 @@ end
 -- ================================================================
 
 function M.add_history(role, content)
+    -- Never record empty messages: providers (Anthropic in particular)
+    -- reject requests containing empty content blocks.
+    if not content or content == "" then return end
     state.history[#state.history + 1] = {role = role, content = content}
 end
 
 function M.get_history()
     return state.history
+end
+
+function M.clear_history()
+    state.history = {}
+end
+
+-- Cap for the "all" memory window so an all-day session does not grow
+-- requests without bound.
+local MAX_ALL_MESSAGES = 40
+
+--- Copy the last MAX_ALL_MESSAGES history entries, starting on a user
+--- turn (providers expect the transcript to open with a user message).
+local function window_all(hist)
+    local count = #hist
+    local start = math.max(1, count - MAX_ALL_MESSAGES + 1)
+    while start <= count and hist[start].role ~= "user" do
+        start = start + 1
+    end
+    local msgs = {}
+    for i = start, count do
+        msgs[#msgs + 1] = {role = hist[i].role, content = hist[i].content}
+    end
+    return msgs
 end
 
 --- Build the conversation messages to include in the API request
@@ -471,11 +498,7 @@ function M.build_memory_messages()
     end
 
     if mem == "all" then
-        local msgs = {}
-        for i = 1, count do
-            msgs[#msgs + 1] = {role = hist[i].role, content = hist[i].content}
-        end
-        return msgs
+        return window_all(hist)
     end
 
     if mem == "last_answer" then
@@ -497,11 +520,7 @@ function M.build_memory_messages()
     local wanted = pair_counts[mem]
     if not wanted then
         -- Unknown memory setting, treat as all
-        local msgs = {}
-        for i = 1, count do
-            msgs[#msgs + 1] = {role = hist[i].role, content = hist[i].content}
-        end
-        return msgs
+        return window_all(hist)
     end
 
     -- Find completed QA pairs from the end
@@ -541,6 +560,15 @@ end
 
 local function ensure_recall_dir()
     local dir = M.get_recall_dir()
+    if not dir then return nil end
+    ensure_dir(dir)
+    return dir
+end
+
+--- Ensure the config directory exists; used by callers that write
+--- sidecar files (e.g., the model-list disk cache).
+function M.ensure_config_dir()
+    local dir = M.get_config_dir()
     if not dir then return nil end
     ensure_dir(dir)
     return dir
@@ -624,8 +652,10 @@ function M.set_model(credential, provider, model)
     state.credential = credential
     state.provider = provider
     state.model = model
-    -- Clear mode on model change — effective mode becomes "default"
-    state.mode = nil
+    -- Reset mode on model change. Must be an explicit "default" (not nil):
+    -- nil would fall through to the config file's mode, which belongs to
+    -- the previous model.
+    state.mode = "default"
     -- Clear web search rejection cache for new model
     state.web_search_rejected = {}
 end
@@ -636,6 +666,22 @@ end
 
 function M.set_memory(memory_value)
     state.memory = memory_value
+end
+
+function M.set_max_tokens(n)
+    state.max_tokens = n
+end
+
+function M.set_timeout(n)
+    state.timeout = n
+end
+
+function M.set_last_answer(text)
+    state.last_answer = text
+end
+
+function M.get_last_answer()
+    return state.last_answer
 end
 
 function M.clear_model_cache()

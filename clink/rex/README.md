@@ -65,11 +65,19 @@ Slash commands are submitted via **Ctrl+Enter**, same as prompts.
 
 | Command | Action |
 |---------|--------|
-| `/model` | Select model via popup list |
+| `/model [filter]` | Select model via popup; a unique filter match selects directly. `/model refresh` re-fetches the list, bypassing the cache |
 | `/mode` | Select mode (e.g., thinking, reasoning effort) |
 | `/memory` | Select the conversation-memory window |
+| `/set <key> <value>` | Set `max_tokens`, `timeout`, or `memory` directly |
+| `/run <cmd>` or `!<cmd>` | Run a shell command with no LLM round-trip; its output joins conversation memory, so follow-up questions can reference it |
+| `/retry` | Resend the last prompt (regenerates the answer) |
+| `/clear` | Clear conversation memory |
+| `/copy` | Copy the last answer to the clipboard (ANSI stripped) |
+| `/settings` | Show effective settings |
 | `/context` | Show text sent to the LLM; `/context <prompt>` includes a specific prompt |
 | `/help` | List commands |
+
+Each answer ends with a dim token-usage line (`↳ 1234 in / 567 out`) when the provider reports usage. Model lists are cached on disk for 24 hours; use `/model refresh` after a provider adds new models.
 
 ## API Key Prefixes
 

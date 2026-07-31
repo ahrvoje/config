@@ -25,32 +25,48 @@ end
 -- Context capture
 -- ================================================================
 
+-- Git-branch lookups spawn a process; cache per cwd with a short TTL so
+-- every Ctrl+Enter does not pay the popen cost. Negative results (not a
+-- repo) are cached too.
+local branch_cache = {}
+local BRANCH_TTL_SEC = 30
+
 --- Capture current terminal/shell context for the system prompt.
 --- Returns a table with cwd, git_branch, term_width, term_height.
 function M.capture_context()
     local ctx = {}
 
-    -- Working directory
+    -- Working directory (Clink emulates cmd's dynamic CD variable)
     ctx.cwd = os.getenv("CD")
-    if not ctx.cwd or ctx.cwd == "" then
-        -- Fallback: try clink.get_cwd() if available
-        if clink and clink.get_cwd then
-            ctx.cwd = clink.get_cwd()
-        end
+    if (not ctx.cwd or ctx.cwd == "") and os.getcwd then
+        ctx.cwd = os.getcwd()
     end
 
-    -- Terminal size
-    ctx.term_width = tonumber(os.getenv("COLUMNS")) or 120
-    ctx.term_height = tonumber(os.getenv("LINES")) or 30
+    -- Terminal size: cmd does not export COLUMNS/LINES, so prefer
+    -- Clink's console API and keep the env vars as a fallback.
+    ctx.term_width = (console and console.getwidth and console.getwidth())
+        or tonumber(os.getenv("COLUMNS")) or 120
+    ctx.term_height = (console and console.getheight and console.getheight())
+        or tonumber(os.getenv("LINES")) or 30
 
     -- Git branch (best effort, fail silently)
-    local pipe = io.popen("git rev-parse --abbrev-ref HEAD 2>nul", "r")
-    if pipe then
-        local branch = pipe:read("*l")
-        pipe:close()
-        if branch and branch ~= "" and not branch:match("^fatal:") then
-            ctx.git_branch = branch
+    local key = ctx.cwd or ""
+    local cached = branch_cache[key]
+    local now = os.time()
+    if cached and (now - cached.at) < BRANCH_TTL_SEC then
+        ctx.git_branch = cached.branch
+    else
+        local branch
+        local pipe = io.popen("git rev-parse --abbrev-ref HEAD 2>nul", "r")
+        if pipe then
+            local line = pipe:read("*l")
+            pipe:close()
+            if line and line ~= "" and not line:match("^fatal:") then
+                branch = line
+            end
         end
+        branch_cache[key] = {branch = branch, at = now}
+        ctx.git_branch = branch
     end
 
     return ctx
@@ -68,8 +84,8 @@ function M.is_shell_request(prompt)
 
     -- Direct command patterns — terse imperatives that mean "run this"
     local direct_commands = {
-        "^dir%s*",  "^dir$",
-        "^ls%s*",   "^ls$",
+        "^dir%s",  "^dir$",
+        "^ls%s",   "^ls$",
         "^pwd$",
         "^cd%s+",   "^cd$",
         "^mkdir%s+",
@@ -163,13 +179,24 @@ function M.build_system_prompt(ctx, is_shell_req)
         parts[#parts + 1] = shell_text
     end
 
-    -- 4. Skills block
+    -- 4. Shell protocol + cmd guidance — only when this turn can actually
+    -- execute a shell block. Non-shell turns never execute blocks (see
+    -- process_response), so omitting the ~3.5 KB of protocol text there
+    -- loses nothing and roughly halves the per-turn prompt size.
+    if is_shell_req then
+        local shell_guidance = state_mod.get_skill_section("shell_guidance")
+        if shell_guidance and shell_guidance ~= "" then
+            parts[#parts + 1] = shell_guidance
+        end
+    end
+
+    -- 5. Skills block
     local skills = state_mod.get_skill_section("shared_guidance") or state_mod.get_skills()
     if skills then
         parts[#parts + 1] = skills
     end
 
-    -- 5. Context block
+    -- 6. Context block
     local ctx_lines = {"## Current Environment"}
     if ctx.cwd then
         ctx_lines[#ctx_lines + 1] = "- Working directory: " .. ctx.cwd
@@ -250,15 +277,7 @@ function M.parse_shell_command(text)
     local block = text:sub(start_pos + #SHELL_SENTINEL_START, end_pos - 1)
 
     -- Trim leading newline
-    block = block:gsub("^\n", "")
-
-    -- Parse headers and command body, separated by a blank line
-    local headers_part, command_part = block:match("^(.-)%f[\r\n]%s*\n(.*)")
-    if not headers_part then
-        -- Maybe no blank line separator — try just headers
-        headers_part = block
-        command_part = ""
-    end
+    block = block:gsub("^\r?\n", "")
 
     local result = {
         shell       = nil,
@@ -267,24 +286,38 @@ function M.parse_shell_command(text)
         command     = nil,
     }
 
-    -- Parse header lines
-    for line in headers_part:gmatch("[^\r\n]+") do
-        local key, value = line:match("^(%w+)%s*=%s*(.-)%s*$")
-        if key then
-            if key == "shell" then
-                result.shell = value
-            elseif key == "cwd" then
-                result.cwd = value
-            elseif key == "timeout_sec" then
-                result.timeout_sec = tonumber(value)
-            end
+    -- Consume leading header lines (shell/cwd/timeout_sec). The first
+    -- blank line or non-header line starts the command body. This handles
+    -- any number of headers, with or without the blank-line separator.
+    local pos = 1
+    while pos <= #block do
+        local line_end = block:find("\n", pos, true)
+        local line = line_end and block:sub(pos, line_end - 1) or block:sub(pos)
+        line = line:gsub("\r$", "")
+        local next_pos = line_end and (line_end + 1) or (#block + 1)
+
+        local key, value = line:match("^([%w_]+)%s*=%s*(.-)%s*$")
+        if key == "shell" then
+            result.shell = value
+            pos = next_pos
+        elseif key == "cwd" then
+            result.cwd = value
+            pos = next_pos
+        elseif key == "timeout_sec" then
+            result.timeout_sec = tonumber(value)
+            pos = next_pos
+        elseif line:match("^%s*$") then
+            -- Blank separator: everything after it is the command body
+            pos = next_pos
+            break
+        else
+            -- Non-header line: command body starts here
+            break
         end
     end
 
     -- Trim command body
-    if command_part then
-        result.command = command_part:match("^%s*(.-)%s*$")
-    end
+    result.command = block:sub(pos):match("^%s*(.-)%s*$")
 
     -- Validate: shell is required
     if not result.shell then return nil end
@@ -321,12 +354,12 @@ function M.execute_shell_command(parsed_cmd, rl_buffer)
 
     local cmd_text = parsed_cmd.command
     local shell = parsed_cmd.shell or "cmd"
-    local timeout = parsed_cmd.timeout_sec or 30
 
-    -- Determine working directory
-    local cwd = parsed_cmd.cwd
-    if cwd == "." or not cwd or cwd == "" then
-        cwd = os.getenv("CD") or ""
+    -- Explicit working directory, if the model provided one. "." means
+    -- "current directory", which needs no cd at all.
+    local explicit_cwd = parsed_cmd.cwd
+    if explicit_cwd == "." or explicit_cwd == "" then
+        explicit_cwd = nil
     end
 
     -- Detect session-mutating commands that need main-session execution
@@ -364,13 +397,16 @@ function M.execute_shell_command(parsed_cmd, rl_buffer)
     -- Non-session-mutating: execute via io.popen and capture output
     local full_cmd
     if shell == "powershell" then
-        -- Escape for powershell
-        local escaped = cmd_text:gsub('"', '\\"')
+        local ps = cmd_text
+        if explicit_cwd then
+            ps = 'Set-Location "' .. explicit_cwd .. '"; ' .. ps
+        end
+        local escaped = ps:gsub('"', '\\"')
         full_cmd = 'powershell -NoProfile -NonInteractive -Command "' .. escaped .. '" 2>&1'
     else
         -- cmd
-        if cwd ~= "" and cwd ~= "." then
-            full_cmd = 'cd /d "' .. cwd .. '" && ' .. cmd_text .. ' 2>&1'
+        if explicit_cwd then
+            full_cmd = 'cd /d "' .. explicit_cwd .. '" && ' .. cmd_text .. ' 2>&1'
         else
             full_cmd = cmd_text .. " 2>&1"
         end
@@ -613,7 +649,8 @@ function M.format_context_display(user_text)
             provider,
             model,
             state_mod.resolve_mode(),
-            state_mod.resolve_max_tokens()
+            state_mod.resolve_max_tokens(),
+            state_mod.resolve_credential()
         )
 
         if body then

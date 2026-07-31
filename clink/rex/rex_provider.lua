@@ -221,7 +221,7 @@ local function build_auth_headers(provider_name, api_key)
     end
 end
 
-local function build_temp_json_path()
+local function build_temp_base()
     local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "."
     temp_dir = temp_dir:gsub("[/\\]+$", "")
     if temp_dir == "" then
@@ -234,73 +234,111 @@ local function build_temp_json_path()
         clock_component = "0"
     end
 
-    return temp_dir .. "\\rex_" .. clock_component .. "_" .. math.random(10000, 99999) .. ".json"
+    return temp_dir .. "\\rex_" .. clock_component .. "_" .. math.random(10000, 99999)
 end
 
 --- Execute an HTTP request via curl.
---- Returns parsed JSON response, HTTP status, or nil + error.
+--- Headers are passed via a temp file so API keys never appear on the
+--- command line (visible to any process lister), and stderr is captured
+--- separately so curl warnings cannot corrupt the JSON body.
+--- Returns parsed_json, nil, http_status on success; nil + error otherwise.
 function M.http_request(method, url, headers, body_str, timeout)
     timeout = timeout or 120
 
-    -- Write body to temp file to avoid shell-escaping issues
-    local temp_file = build_temp_json_path()
+    local base = build_temp_base()
+    local header_file = base .. ".hdr"
+    local body_file   = base .. ".body"
+    local err_file    = base .. ".err"
+
+    local function cleanup()
+        os.remove(header_file)
+        os.remove(err_file)
+        if body_str then os.remove(body_file) end
+    end
+
+    local hf = io.open(header_file, "w")
+    if not hf then return nil, "Cannot write temp header file" end
+    hf:write(table.concat(headers or {}, "\n") .. "\n")
+    hf:close()
 
     if body_str then
-        local f = io.open(temp_file, "w")
-        if not f then return nil, "Cannot write temp file" end
+        local f = io.open(body_file, "w")
+        if not f then cleanup(); return nil, "Cannot write temp body file" end
         f:write(body_str)
         f:close()
     end
 
-    -- Build curl command
-    local parts = {"curl", "-s", "-S", "--max-time", tostring(timeout)}
+    -- Build curl command. -w appends the HTTP status on its own line so
+    -- transient errors (429/5xx) can be classified reliably.
+    local parts = {
+        "curl", "-s", "-S",
+        "--connect-timeout", "10",
+        "--max-time", tostring(timeout),
+        "-w", '"\\n%{http_code}"',
+        "-H", '"@' .. header_file .. '"',
+    }
 
     if method == "POST" then
         parts[#parts + 1] = "-X"
         parts[#parts + 1] = "POST"
     end
 
-    for _, h in ipairs(headers or {}) do
-        parts[#parts + 1] = "-H"
-        parts[#parts + 1] = '"' .. h .. '"'
-    end
-
     if body_str then
         parts[#parts + 1] = "-d"
-        parts[#parts + 1] = '"@' .. temp_file .. '"'
+        parts[#parts + 1] = '"@' .. body_file .. '"'
     end
 
     parts[#parts + 1] = '"' .. url .. '"'
 
-    local cmd = table.concat(parts, " ")
-    local pipe = io.popen(cmd .. " 2>&1", "r")
+    local cmd = table.concat(parts, " ") .. ' 2>"' .. err_file .. '"'
+    local pipe = io.popen(cmd, "r")
     if not pipe then
-        if body_str then os.remove(temp_file) end
+        cleanup()
         return nil, "Failed to execute curl"
     end
 
-    local response = pipe:read("*a")
-    pipe:close()
-
-    -- Clean up temp file
-    if body_str then os.remove(temp_file) end
-
-    if not response or response == "" then
-        return nil, "Empty response from curl"
+    local response = pipe:read("*a") or ""
+    local ok, _, exit_code = pipe:close()
+    if type(exit_code) ~= "number" then
+        exit_code = ok and 0 or 1
     end
 
-    -- Check for curl errors (non-JSON responses starting with "curl:")
-    if response:match("^curl:") or response:match("^curl %(") then
-        return nil, "Network error: " .. response:match("^(.-)[\r\n]") or response
+    local stderr_text = ""
+    local ef = io.open(err_file, "r")
+    if ef then
+        stderr_text = ef:read("*a") or ""
+        ef:close()
+    end
+    cleanup()
+
+    if exit_code ~= 0 then
+        local msg = stderr_text:match("^%s*(.-)%s*$") or ""
+        if msg == "" then
+            msg = "curl exited with code " .. tostring(exit_code)
+        end
+        return nil, "Network error: " .. (msg:match("^([^\r\n]*)") or msg)
+    end
+
+    -- Split off the trailing status line added by -w
+    local body, status = response:match("^(.*)\n(%d%d%d)%s*$")
+    if not body then
+        body = response
+        status = nil
+    end
+    local status_num = tonumber(status)
+
+    if not body or body == "" then
+        return nil, "Empty response from server (HTTP " .. tostring(status or "?") .. ")"
     end
 
     -- Parse JSON
-    local parsed, parse_err = json.decode(response)
+    local parsed, parse_err = json.decode(body)
     if not parsed then
-        return nil, "Failed to parse response: " .. tostring(parse_err)
+        return nil, "Failed to parse response (HTTP " .. tostring(status or "?") ..
+            "): " .. tostring(parse_err)
     end
 
-    return parsed
+    return parsed, nil, status_num
 end
 
 -- ================================================================
@@ -313,7 +351,8 @@ local model_filters = {
         return model.id and model.id:match("^claude%-")
     end,
     openai = function(model)
-        return model.id and (model.id:match("^gpt%-") or model.id:match("^o"))
+        -- gpt-* chat models and o-series reasoning models (o1, o3, ...)
+        return model.id and (model.id:match("^gpt%-") or model.id:match("^o%d"))
     end,
     github = function(model)
         -- Include catalog entries that support text input and text output
@@ -403,15 +442,73 @@ function M.fetch_models(credential)
     return models
 end
 
---- Fetch models for a credential, with caching.
-function M.fetch_models_cached(credential)
+-- ================================================================
+-- Model list caching (session + disk)
+-- ================================================================
+
+local MODEL_CACHE_TTL_SEC = 24 * 60 * 60
+
+local function model_cache_path(credential)
+    local dir = state_mod.get_config_dir()
+    if not dir then return nil end
+    return dir .. "/models_" .. credential.id:gsub("[^%w_%-]", "_") .. ".json"
+end
+
+local function read_model_disk_cache(credential)
+    local path = model_cache_path(credential)
+    if not path then return nil end
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local text = f:read("*a")
+    f:close()
+    local data = json.decode(text or "")
+    if type(data) ~= "table" or type(data.models) ~= "table" or
+       type(data.fetched_at) ~= "number" then
+        return nil
+    end
+    if data.provider ~= credential.provider then return nil end
+    if os.time() - data.fetched_at > MODEL_CACHE_TTL_SEC then return nil end
+    if #data.models == 0 then return nil end
+    return data.models
+end
+
+local function write_model_disk_cache(credential, models)
+    if #models == 0 then return end
+    local path = model_cache_path(credential)
+    if not path then return end
+    state_mod.ensure_config_dir()
+    local text = json.encode({
+        provider   = credential.provider,
+        fetched_at = os.time(),
+        models     = models,
+    })
+    if not text then return end
+    local f = io.open(path, "w")
+    if not f then return end
+    f:write(text)
+    f:close()
+end
+
+--- Fetch models for a credential, with session + disk caching.
+--- Pass force=true to bypass both caches (used by /model refresh).
+function M.fetch_models_cached(credential, force)
     if not credential then return nil, "No credential" end
-    local cached = state_mod.get_model_cache(credential.id)
-    if cached then return cached end
+
+    if not force then
+        local cached = state_mod.get_model_cache(credential.id)
+        if cached then return cached end
+
+        local disk = read_model_disk_cache(credential)
+        if disk then
+            state_mod.set_model_cache(credential.id, disk)
+            return disk
+        end
+    end
 
     local models, err = M.fetch_models(credential)
     if models then
         state_mod.set_model_cache(credential.id, models)
+        write_model_disk_cache(credential, models)
     end
     return models, err
 end
@@ -421,14 +518,13 @@ end
 -- ================================================================
 
 --- Build the web search tool definition if appropriate.
+--- Only the Anthropic Messages API supports a server-side web search tool
+--- here; OpenAI's chat-completions endpoint does not accept one.
 local function build_web_search_tool(provider, credential_id, model_id)
-    -- Check modes.json capabilities
+    if provider ~= "anthropic" then return nil end
+
+    -- Check modes.json capabilities: only attach when explicitly enabled
     local caps = state_mod.resolve_capabilities(provider, model_id)
-
-    -- If explicitly false, omit
-    if caps.web_search == false then return nil end
-
-    -- If not explicitly true, omit (conservative default)
     if caps.web_search ~= true then return nil end
 
     -- Check session-level rejection
@@ -436,15 +532,7 @@ local function build_web_search_tool(provider, credential_id, model_id)
         return nil
     end
 
-    -- Only Anthropic and OpenAI endpoint families support web search
-    if provider == "anthropic" then
-        return {type = "web_search_20250305", name = "web_search"}
-    elseif provider == "openai" then
-        return {type = "web_search_preview"}
-    end
-
-    -- GitHub, Groq, xAI: no web search tool support
-    return nil
+    return {type = "web_search_20250305", name = "web_search"}
 end
 
 --- Deep-merge mode params into a base table.
@@ -460,8 +548,10 @@ local function deep_merge(base, overlay)
 end
 
 --- Build the complete API request body.
---- Returns body_table, provider_name, or nil + error.
-function M.build_request(system_prompt, messages, provider, model_id, mode_id, max_tokens)
+--- credential_id is used to key the web-search rejection cache; falls back
+--- to the configured credential when omitted (e.g., /context preview).
+--- Returns body_table or nil + error.
+function M.build_request(system_prompt, messages, provider, model_id, mode_id, max_tokens, credential_id)
     local prov = PROVIDERS[provider]
     if not prov then return nil, "Unknown provider: " .. tostring(provider) end
 
@@ -484,10 +574,15 @@ function M.build_request(system_prompt, messages, provider, model_id, mode_id, m
             msgs[#msgs + 1] = {role = m.role, content = m.content}
         end
         body = {
-            model      = model_id,
-            max_tokens = max_tokens,
-            messages   = msgs,
+            model    = model_id,
+            messages = msgs,
         }
+        if provider == "openai" then
+            -- OpenAI reasoning models reject max_tokens
+            body.max_completion_tokens = max_tokens
+        else
+            body.max_tokens = max_tokens
+        end
     end
 
     -- Apply mode params if not default
@@ -502,7 +597,7 @@ function M.build_request(system_prompt, messages, provider, model_id, mode_id, m
     end
 
     -- Add web search tool if supported
-    local cred_id = state_mod.resolve_credential()
+    local cred_id = credential_id or state_mod.resolve_credential()
     local ws_tool = build_web_search_tool(provider, cred_id, model_id)
     if ws_tool then
         body.tools = {ws_tool}
@@ -515,8 +610,20 @@ end
 -- Response extraction
 -- ================================================================
 
+--- Normalize provider token-usage info to {input, output} or nil.
+local function extract_usage(response)
+    local u = response and response.usage
+    if type(u) ~= "table" then return nil end
+    local input = u.input_tokens or u.prompt_tokens
+    local output = u.output_tokens or u.completion_tokens
+    if type(input) ~= "number" then input = nil end
+    if type(output) ~= "number" then output = nil end
+    if not input and not output then return nil end
+    return {input = input, output = output}
+end
+
 --- Extract assistant text from a provider response.
---- Returns text or nil + error.
+--- Returns text, nil, usage on success; nil + error on failure.
 function M.extract_response(provider, response)
     if not response then return nil, "No response" end
 
@@ -539,7 +646,7 @@ function M.extract_response(provider, response)
                 end
             end
             if #parts > 0 then
-                return table.concat(parts)
+                return table.concat(parts), nil, extract_usage(response)
             end
         end
         -- Truly no content in Anthropic response
@@ -549,7 +656,7 @@ function M.extract_response(provider, response)
         if response.choices and type(response.choices) == "table" then
             local first = response.choices[1]
             if first and first.message and first.message.content then
-                return first.message.content
+                return first.message.content, nil, extract_usage(response)
             end
         end
         return nil, "No content in " .. (provider or "unknown") .. " response"
@@ -560,59 +667,48 @@ end
 -- Error classification
 -- ================================================================
 
---- Classify an error as transient (retryable) or permanent.
---- Returns "transient" or "permanent".
-function M.classify_error(response, err_msg)
-    if not response and err_msg then
-        -- Check for timeout or network errors
-        if err_msg:match("timed? ?out") or err_msg:match("curl") then
+--- Classify an error as transient (retryable), permanent, or a tool
+--- rejection ("permanent_tool"). status is the HTTP status when known.
+function M.classify_error(response, err_msg, status)
+    if type(response) == "table" and type(response.error) == "table" then
+        local etype = tostring(response.error.type or "")
+        local emsg = tostring(response.error.message or "")
+        -- Unsupported tool — permanent for this tool config only
+        if emsg:match("does not support tool") or emsg:match("unsupported.*tool") then
+            return "permanent_tool"
+        end
+        -- Anthropic overloaded
+        if etype:match("[Oo]verloaded") or emsg:match("[Oo]verloaded") then
             return "transient"
         end
-        return "permanent"
-    end
-
-    if type(response) == "table" then
-        -- Check for transient HTTP error patterns
-        local err = response.error
-        if type(err) == "table" then
-            local etype = err.type or ""
-            local emsg = err.message or ""
-            -- Anthropic overloaded
-            if etype:match("[Oo]verloaded") or emsg:match("[Oo]verloaded") then
-                return "transient"
-            end
-            -- Rate limit
-            if etype:match("rate_limit") or emsg:match("rate.limit") then
-                return "transient"
-            end
-            -- Unsupported tool — this is a permanent error for this tool config
-            if emsg:match("does not support tool") or emsg:match("unsupported.*tool") then
-                return "permanent_tool"
-            end
-            -- Unsupported mode/param
-            if emsg:match("unsupported") or emsg:match("not supported") or
-               emsg:match("invalid.*param") or emsg:match("Field required") then
-                return "permanent"
-            end
+        -- Rate limit
+        if etype:match("rate_limit") or emsg:match("rate.limit") then
+            return "transient"
         end
-
-        -- Check HTTP status via response shape
-        if response.status then
-            local s = tonumber(response.status)
-            if s == 429 or s == 503 or s == 529 then
-                return "transient"
-            end
+        -- Unsupported mode/param
+        if emsg:match("unsupported") or emsg:match("not supported") or
+           emsg:match("invalid.*param") or emsg:match("Field required") then
+            return "permanent"
         end
     end
 
-    -- Default to permanent for unrecognized errors
+    -- HTTP status is the most reliable signal when available
+    if status == 429 or (status and status >= 500) then
+        return "transient"
+    end
+
     if err_msg then
+        if err_msg:match("timed? ?out") or err_msg:match("curl") or
+           err_msg:match("Network error") then
+            return "transient"
+        end
         if err_msg:match("429") or err_msg:match("503") or err_msg:match("529") or
            err_msg:match("[Oo]verloaded") or err_msg:match("rate.limit") then
             return "transient"
         end
     end
 
+    -- Default to permanent for unrecognized errors
     return "permanent"
 end
 
@@ -620,8 +716,13 @@ end
 -- Request execution with retry
 -- ================================================================
 
+local function backoff_wait(attempt)
+    -- Short backoff: ~1s, ~2s (ping to self as a portable sleep)
+    os.execute("ping -n " .. (attempt + 1) .. " 127.0.0.1 >nul 2>&1")
+end
+
 --- Send a chat request to the API with retry for transient errors.
---- Returns extracted text or nil + error.
+--- Returns extracted text, nil, usage — or nil + error.
 function M.send_request(system_prompt, messages, options)
     options = options or {}
     local provider = options.provider or state_mod.resolve_provider()
@@ -637,8 +738,16 @@ function M.send_request(system_prompt, messages, options)
     local cred, _, cred_err = M.resolve_active_credential()
     if not cred then return nil, cred_err end
 
+    -- The resolved credential must belong to the configured provider,
+    -- otherwise the request would fail with a confusing auth error.
+    if cred.provider ~= provider then
+        return nil, 'Credential "' .. cred.id .. '" is for provider ' .. cred.provider ..
+            ' but the configured provider is ' .. provider .. '. Use /model to reselect.'
+    end
+
     -- Build request body
-    local body, build_err = M.build_request(system_prompt, messages, provider, model_id, mode_id, max_tokens)
+    local body, build_err = M.build_request(system_prompt, messages, provider, model_id,
+        mode_id, max_tokens, cred.id)
     if not body then return nil, build_err end
 
     local prov = PROVIDERS[provider]
@@ -652,26 +761,24 @@ function M.send_request(system_prompt, messages, options)
     local max_retries = 3
     local last_err = nil
     for attempt = 1, max_retries do
-        local response, http_err = M.http_request("POST", url, headers, body_str, timeout)
+        local response, http_err, status = M.http_request("POST", url, headers, body_str, timeout)
 
-        if http_err then
+        if not response then
             last_err = http_err
-            local class = M.classify_error(nil, http_err)
+            local class = M.classify_error(nil, http_err, status)
             if class == "transient" and attempt < max_retries then
-                -- Short backoff: 1s, 2s
-                local wait_cmd = "ping -n " .. (attempt + 1) .. " 127.0.0.1 >nul 2>&1"
-                os.execute(wait_cmd)
+                backoff_wait(attempt)
             else
                 return nil, http_err
             end
-        elseif response then
-            local text, extract_err = M.extract_response(provider, response)
+        else
+            local text, extract_err, usage = M.extract_response(provider, response)
             if text then
-                return text
+                return text, nil, usage
             end
 
             -- Check if this is a tool-rejection error
-            local class = M.classify_error(response, extract_err)
+            local class = M.classify_error(response, extract_err, status)
             if class == "permanent_tool" then
                 -- Retry without web search tool
                 state_mod.mark_web_search_rejected(provider, cred.id, model_id)
@@ -679,17 +786,13 @@ function M.send_request(system_prompt, messages, options)
                 body_str = json.encode(body)
                 -- Immediate single retry without the tool
                 local resp2, err2 = M.http_request("POST", url, headers, body_str, timeout)
-                if err2 then return nil, err2 end
-                if resp2 then
-                    local t2, e2 = M.extract_response(provider, resp2)
-                    if t2 then return t2 end
-                    return nil, e2
-                end
-                return nil, extract_err
+                if not resp2 then return nil, err2 end
+                local t2, e2, u2 = M.extract_response(provider, resp2)
+                if t2 then return t2, nil, u2 end
+                return nil, e2
             elseif class == "transient" and attempt < max_retries then
                 last_err = extract_err
-                local wait_cmd = "ping -n " .. (attempt + 1) .. " 127.0.0.1 >nul 2>&1"
-                os.execute(wait_cmd)
+                backoff_wait(attempt)
             else
                 return nil, extract_err
             end
@@ -708,83 +811,6 @@ function M.send_request(system_prompt, messages, options)
     end
 
     return nil, last_err or "Request failed after retries"
-end
-
--- ================================================================
--- Model validation
--- ================================================================
-
---- Validate a model selection by making a minimal test request.
---- Returns true on success, false + error on failure.
-function M.validate_model(credential, model_id, mode_id)
-    if not credential then return false, "No credential" end
-
-    local provider = credential.provider
-    local prov = PROVIDERS[provider]
-    if not prov then return false, "Unknown provider" end
-
-    -- Build a minimal request
-    local body
-    if provider == "anthropic" then
-        body = {
-            model      = model_id,
-            max_tokens = 1,
-            system     = "Reply with OK.",
-            messages   = {{role = "user", content = "ping"}},
-        }
-    else
-        body = {
-            model      = model_id,
-            max_tokens = 1,
-            messages   = {
-                {role = "system", content = "Reply with OK."},
-                {role = "user", content = "ping"},
-            },
-        }
-    end
-
-    -- Apply mode params if not default
-    if mode_id and mode_id ~= "default" then
-        local modes = state_mod.resolve_modes_for_model(provider, model_id)
-        for _, m in ipairs(modes) do
-            if m.id == mode_id and m.params then
-                deep_merge(body, m.params)
-                break
-            end
-        end
-    end
-
-    local url = prov.base_url .. prov.chat_endpoint
-    local headers = build_auth_headers(provider, credential.key)
-    local body_str = json.encode(body)
-    if not body_str then return false, "Encode error" end
-
-    local response, http_err = M.http_request("POST", url, headers, body_str, 15)
-    if http_err then
-        local class = M.classify_error(nil, http_err)
-        if class == "transient" then
-            -- Transient errors do not invalidate the selection
-            return true
-        end
-        return false, http_err
-    end
-
-    if not response then return false, "No response" end
-
-    -- Check for API-level error
-    if response.error then
-        local msg = response.error
-        if type(msg) == "table" then
-            msg = msg.message or json.encode(msg) or "Unknown error"
-        end
-        local class = M.classify_error(response, tostring(msg))
-        if class == "transient" then
-            return true -- Transient: selection is fine
-        end
-        return false, tostring(msg)
-    end
-
-    return true
 end
 
 return M
