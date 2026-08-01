@@ -453,10 +453,10 @@ local function pane_is_alt_screen(pane)
   return ok and active == true
 end
 
--- fzf (zsh/.zshrc widgets) runs with --height, so it never enters the alt
--- screen and doesn't expose alternate-screen ownership.
--- The zsh side flags it via OSC 1337 user var while fzf owns the pane;
--- get_user_vars is an in-memory read, safe on per-keystroke paths.
+-- Inline fzf selectors never enter the alt screen, so they don't expose
+-- alternate-screen ownership.  The zsh and Clink integrations flag them via
+-- an OSC 1337 user var while fzf owns the pane; get_user_vars is an in-memory
+-- read, safe on per-keystroke paths.
 local function pane_fzf_active(pane, user_vars)
   return (user_vars or read_pane_user_vars(pane)).fzf == 'on'
 end
@@ -669,8 +669,8 @@ local action_Esc = function(window, pane)
   end
   local shell, at_prompt, integrated, user_vars = pane_prompt_context(pane)
   if pane_fzf_active(pane, user_vars) then
-    -- explicit signal from the zsh fzf wrappers; it works through WSL/MSYS
-    -- boundaries where host-side process identities are not authoritative
+    -- Explicit signal from the shell's fzf wrapper; Ctrl-G is fzf's abort key
+    -- and works through native Windows, WSL, and MSYS terminal boundaries.
     window:perform_action(fzf_escape, pane)
   elseif pane_clink_popup_active(pane, user_vars) then
     -- a Clink popup (e.g. Rex selector) owns the pane; an Escape key event

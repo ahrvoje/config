@@ -77,8 +77,8 @@ shell behavior.
 
 - Ctrl-C copies a selection or sends interrupt.
 - Esc clears a line only at an authoritative integrated prompt. It sends a
-  real Escape to unknown/remote panes and alternate-screen apps, Ctrl-G to the
-  zsh fzf overlay, and Win32 input records to Clink popups.
+  real Escape to unknown/remote panes and alternate-screen apps, Ctrl-G to
+  shell-owned fzf overlays, and Win32 input records to Clink popups.
 - Ctrl-D uses native terminal EOF except at an authoritative cmd prompt, where
   it clears the buffer and submits `exit`.
 - Ctrl-L always sends the Ctrl-L key; never append a textual `clear` command to

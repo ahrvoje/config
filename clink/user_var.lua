@@ -68,6 +68,49 @@ local function command_label(line)
   return first ~= '' and first or 'cmd'
 end
 
+-- Selectors run inside the current Readline edit session, so shell_prompt
+-- remains "on" while they own the terminal.  Publish that ownership
+-- explicitly; otherwise WezTerm treats Esc as the cmd line-clear gesture.
+-- Its final Delete key is especially dangerous in fzf_history, where Delete
+-- permanently removes the selected history entry.
+local function with_user_var(name, callback, ...)
+  emit { user_var(name, 'on') }
+  local ok, err = pcall(callback, ...)
+  emit { user_var(name, 'off') }
+  if not ok then
+    error(err, 0)
+  end
+end
+
+local function wrap_global_with_user_var(name, callback_name)
+  return function(rl_buffer, ...)
+    local callback = rawget(_G, callback_name)
+    if type(callback) ~= 'function' then
+      rl_buffer:ding()
+      return
+    end
+    return with_user_var(name, callback, rl_buffer, ...)
+  end
+end
+
+-- luacheck: globals fzf_file_with_user_var fzf_history_with_user_var
+-- luacheck: globals fzf_directory_with_user_var fzf_bindings_with_user_var
+-- luacheck: globals fzf_complete_with_user_var fzf_complete_force_with_user_var
+-- luacheck: globals fzf_disks_with_user_var zoxide_interactive_with_user_var
+fzf_file_with_user_var = wrap_global_with_user_var('fzf', 'fzf_file')
+fzf_history_with_user_var = wrap_global_with_user_var('fzf', 'fzf_history')
+fzf_directory_with_user_var = wrap_global_with_user_var('fzf', 'fzf_directory')
+fzf_bindings_with_user_var = wrap_global_with_user_var('fzf', 'fzf_bindings')
+fzf_complete_with_user_var = wrap_global_with_user_var('fzf', 'fzf_complete')
+fzf_complete_force_with_user_var = wrap_global_with_user_var('fzf', 'fzf_complete_force')
+fzf_disks_with_user_var = wrap_global_with_user_var('fzf', 'fzf_disks')
+zoxide_interactive_with_user_var = wrap_global_with_user_var('fzf', 'zoxide_interactive')
+
+-- luacheck: globals clink_popup_directories_with_user_var
+function clink_popup_directories_with_user_var()
+  return with_user_var('clink_popup', rl.invokecommand, 'clink-popup-directories')
+end
+
 local function on_begin_edit()
   local parts = {}
   local cwd = current_cwd_osc()
@@ -84,6 +127,8 @@ local function on_begin_edit()
     user_var('process_name', 'cmd'),
     user_var('command_token', ''),
     user_var('nvim', 'off'),
+    user_var('fzf', 'off'),
+    user_var('clink_popup', 'off'),
     user_var('clink', 'on'),
   }
   for _, sequence in ipairs(state) do

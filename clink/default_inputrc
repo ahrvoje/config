@@ -30,14 +30,14 @@ set search-ignore-case                        on
 "\e[B": history-search-forward    # Down Arrow
 
 # Default key bindings for fzf with Clink.
-"\C-t":        "luafunc:fzf_file"               # Ctrl-T lists files recursively; choose one or multiple to insert them.
-"\C-r":        "luafunc:fzf_history"            # Ctrl-R lists history entries; choose one to insert it.
-"\M-c":        "luafunc:fzf_directory"          # Alt-C lists subdirectories; choose one to 'cd /d' to it.
-"\M-b":        "luafunc:fzf_bindings"           # Alt-B lists key bindings; choose one to invoke it.
-"\t":          "luafunc:fzf_complete"           # Tab uses fzf to filter match completions, but only when preceded by '**' (recursive).
-"\e[27;5;32~": "luafunc:fzf_complete_force"     # Ctrl-Space uses fzf to filter match completions (and supports '**' for recursive).
-"\C-y":        "luafunc:fzf_disks"              # Ctrl-Y lists files across all local disks; choose one or multiple to insert them.
-"\M-z":        "luafunc:zoxide_interactive"     # Alt-Z shows zoxide directory history; choose one to cd to it.
-"\M-d":        clink-popup-directories          # Alt-D shows clink's built-in directory history popup.
+"\C-t":        "luafunc:fzf_file_with_user_var" # Ctrl-T lists files recursively; choose one or multiple to insert them.
+"\C-r":        "luafunc:fzf_history_with_user_var" # Ctrl-R lists history entries; Esc aborts without deleting one.
+"\M-c":        "luafunc:fzf_directory_with_user_var" # Alt-C lists subdirectories; choose one to 'cd /d' to it.
+"\M-b":        "luafunc:fzf_bindings_with_user_var" # Alt-B lists key bindings; choose one to invoke it.
+"\t":          "luafunc:fzf_complete_with_user_var" # Tab uses fzf to filter match completions, but only when preceded by '**' (recursive).
+"\e[27;5;32~": "luafunc:fzf_complete_force_with_user_var" # Ctrl-Space uses fzf to filter match completions (and supports '**' for recursive).
+"\C-y":        "luafunc:fzf_disks_with_user_var" # Ctrl-Y lists files across all local disks; choose one or multiple to insert them.
+"\M-z":        "luafunc:zoxide_interactive_with_user_var" # Alt-Z shows zoxide directory history; choose one to cd to it.
+"\M-d":        "luafunc:clink_popup_directories_with_user_var" # Alt-D shows Clink's built-in directory history popup.
 "\e[27;5;13~": "luafunc:rex_submit"             # Ctrl-Enter sends input to Rex AI instead of cmd.exe.
 "\e[13;5u":    "luafunc:rex_submit"             # Ctrl-Enter CSI u fallback for Rex AI.
