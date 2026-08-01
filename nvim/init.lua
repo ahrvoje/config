@@ -4,26 +4,99 @@ vim.g.maplocalleader = " "
 vim.opt.fileformats = { "dos", "unix", "mac" } -- detection order
 vim.opt.fixeol = false
 
--- set terminal UserVar 'nvim' to 'on'/'off' on enter/exit
-local function set_user_var(name, b64val)
-  local osc = string.format('\27]1337;SetUserVar=%s=%s\7', name, b64val)
-  if os.getenv('TMUX') then
-    osc = '\27Ptmux;\27' .. osc .. '\27\\'
+-- Publish Neovim state and OSC 7 CWD without spawning helpers. This is a
+-- display/routing protocol; destructive WezTerm actions never trust it.
+local wezterm_integration = os.getenv('WEZTERM_PANE') ~= nil
+local wezterm_in_tmux = os.getenv('TMUX') ~= nil
+local wezterm_state_seq = 0
+
+local function b64(value)
+  local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  local output, length = {}, #value
+  for i = 1, length, 3 do
+    local a = value:byte(i) or 0
+    local b = value:byte(i + 1) or 0
+    local c = value:byte(i + 2) or 0
+    local n = a * 65536 + b * 256 + c
+    local c1 = math.floor(n / 262144) % 64
+    local c2 = math.floor(n / 4096) % 64
+    local c3 = math.floor(n / 64) % 64
+    local c4 = n % 64
+    output[#output + 1] = alphabet:sub(c1 + 1, c1 + 1)
+    output[#output + 1] = alphabet:sub(c2 + 1, c2 + 1)
+    output[#output + 1] = i + 1 <= length and alphabet:sub(c3 + 1, c3 + 1) or '='
+    output[#output + 1] = i + 2 <= length and alphabet:sub(c4 + 1, c4 + 1) or '='
   end
-  vim.api.nvim_chan_send(2, osc)
+  return table.concat(output)
+end
+
+local function osc(body)
+  local sequence = '\27]' .. body .. '\7'
+  if wezterm_in_tmux then
+    -- Prefix ESC plus the OSC's own ESC gives tmux the doubled inner ESC.
+    sequence = '\27Ptmux;\27' .. sequence .. '\27\\'
+  end
+  return sequence
+end
+
+local function user_var(name, value)
+  return osc(string.format('1337;SetUserVar=%s=%s', name, b64(value)))
+end
+
+local function send_terminal_state(parts)
+  if wezterm_integration then
+    vim.api.nvim_chan_send(2, table.concat(parts))
+  end
+end
+
+local function cwd_state()
+  -- Vim's logical CWD respects :lcd/:tcd; libuv's process CWD does not always
+  -- represent the active window after a scoped directory change.
+  local ok, cwd = pcall(vim.fn.getcwd)
+  if not ok or type(cwd) ~= 'string' or cwd == '' then return {} end
+  return {
+    osc('7;' .. vim.uri_from_fname(cwd)),
+    -- Kept after OSC 7, in the same terminal write, so WezTerm's CWD getter
+    -- can only be called after its in-memory URI has been updated.
+    user_var('cwd_ready', tostring(wezterm_state_seq + 1)),
+  }
+end
+
+local function commit_state(parts)
+  wezterm_state_seq = wezterm_state_seq + 1
+  parts[#parts + 1] = user_var('state_serial', tostring(wezterm_state_seq))
+  send_terminal_state(parts)
 end
 
 local grp = vim.api.nvim_create_augroup('NvimVar', { clear = true })
 vim.api.nvim_create_autocmd('VimEnter', {
   group = grp,
   callback = function()
-    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'b24=') end  -- base64('on') = 'b24='
+    local parts = {
+      user_var('shell_prompt', 'off'),
+      user_var('process_name', 'nvim'),
+      user_var('nvim', 'on'),
+    }
+    vim.list_extend(parts, cwd_state())
+    commit_state(parts)
   end,
 })
+vim.api.nvim_create_autocmd('DirChanged', {
+  group = grp,
+  callback = function()
+    commit_state(cwd_state())
+  end,
+})
+local nvim_exit_state_sent = false
 vim.api.nvim_create_autocmd({ 'VimLeavePre', 'VimLeave' }, {
   group = grp,
   callback = function()
-    if os.getenv('WEZTERM_PANE') then set_user_var('nvim', 'b2Zm') end  -- base64('off') = 'b2Zm'
+    if nvim_exit_state_sent then return end
+    nvim_exit_state_sent = true
+    commit_state {
+      user_var('nvim', 'off'),
+      user_var('process_name', ''),
+    }
   end,
 })
 

@@ -2,7 +2,39 @@
 
 [ -f $HOME/.zshlocal ] && source $HOME/.zshlocal
 
-# set terminal UserVar 'zsh' to 'on'/'off' on enter/exit
+# WezTerm shell-state protocol. All encoding and emission is done by zsh
+# builtins: prompt hooks must never spawn base64, pwd, ps, or another helper.
+_wez_base64_ascii() {
+  emulate -L zsh
+  local input=$1 alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  local output='' ch
+  local -i i a b c i1 i2 i3 i4 length=${#input}
+  for (( i = 1; i <= length; i += 3 )); do
+    printf -v a '%d' "'${input[i]}"
+    b=0
+    c=0
+    (( i + 1 <= length )) && printf -v b '%d' "'${input[i + 1]}"
+    (( i + 2 <= length )) && printf -v c '%d' "'${input[i + 2]}"
+    i1=$(( a / 4 + 1 ))
+    i2=$(( (a % 4) * 16 + b / 16 + 1 ))
+    i3=$(( (b % 16) * 4 + c / 64 + 1 ))
+    i4=$(( c % 64 + 1 ))
+    output+=${alphabet[i1]}
+    output+=${alphabet[i2]}
+    if (( i + 1 <= length )); then
+      output+=${alphabet[i3]}
+    else
+      output+='='
+    fi
+    if (( i + 2 <= length )); then
+      output+=${alphabet[i4]}
+    else
+      output+='='
+    fi
+  done
+  REPLY=$output
+}
+
 set_user_var() {
   # WEZTERM_PANE doesn't cross the wsl.exe boundary unless WSLENV forwards it,
   # so inside WSL emit unconditionally; other terminals ignore unknown OSC
@@ -11,19 +43,150 @@ set_user_var() {
   # silently skip when there is no tty (e.g. pane already torn down on exit)
   {
     if [ -n "$TMUX" ]; then
-      printf '\033Ptmux;\033]1337;SetUserVar=%s=%s\007\033\\' "$1" "$2"
+      # tmux passthrough quotes the inner ESC by doubling it. tmux itself must
+      # have `set -g allow-passthrough on`; do not spawn tmux here to mutate it.
+      printf '\033Ptmux;\033\033]1337;SetUserVar=%s=%s\007\033\\' "$1" "$2"
     else
       printf '\033]1337;SetUserVar=%s=%s\007' "$1" "$2"
     fi
   } 2>/dev/null >/dev/tty
 }
-# on start    base64('on') = 'b24='
-set_user_var zsh b24=
-set_user_var fzf b2Zm  # clear a stale fzf flag left by a previous process in this pane
+
+set_user_var_value() {
+  _wez_set_user_vars "$1" "$2"
+}
+
+# Accept name/value pairs and send every OSC in one tty write. This keeps the
+# prompt hook deterministic without paying one console syscall per field.
+_wez_set_user_vars() {
+  [[ -n $WEZTERM_PANE || -n $WSL_DISTRO_NAME ]] || return 0
+  emulate -L zsh
+  local output='' name value
+  while (( $# >= 2 )); do
+    name=$1
+    value=$2
+    shift 2
+    _wez_base64_ascii "$value"
+    if [[ -n $TMUX ]]; then
+      output+=$'\ePtmux;\e\e]1337;SetUserVar='${name}'='${REPLY}$'\a\e\\'
+    else
+      output+=$'\e]1337;SetUserVar='${name}'='${REPLY}$'\a'
+    fi
+  done
+  print -rn -- "$output" 2>/dev/null >/dev/tty
+}
+
+_wez_uri_encode_path() {
+  emulate -L zsh
+  unsetopt multibyte
+  local input=$1 output='' ch hex
+  local -i i
+  for (( i = 1; i <= ${#input}; ++i )); do
+    ch=${input[i]}
+    if [[ $ch == [A-Za-z0-9/._~:-] ]]; then
+      output+=$ch
+    else
+      printf -v hex '%%%02X' "'$ch"
+      output+=$hex
+    fi
+  done
+  REPLY=$output
+}
+
+_wez_emit_cwd() {
+  [[ -n $WEZTERM_PANE || -n $WSL_DISTRO_NAME ]] || return 0
+  _wez_uri_encode_path "$PWD"
+  local _wez_encoded_cwd=$REPLY
+  (( ++_wez_cwd_seq ))
+  _wez_base64_ascii "$$:$_wez_cwd_seq"
+  {
+    if [[ -n $TMUX ]]; then
+      printf '\033Ptmux;\033\033]7;file://%s%s\007\033\\\033Ptmux;\033\033]1337;SetUserVar=cwd_ready=%s\007\033\\' \
+        "${HOST:-}" "$_wez_encoded_cwd" "$REPLY"
+    else
+      printf '\033]7;file://%s%s\007\033]1337;SetUserVar=cwd_ready=%s\007' \
+        "${HOST:-}" "$_wez_encoded_cwd" "$REPLY"
+    fi
+  } 2>/dev/null >/dev/tty
+  # This marker is deliberately emitted after OSC 7. WezTerm may read CWD
+  # only after seeing it, so get_current_working_dir never falls back to ps.
+}
+
+typeset -gi _wez_command_seq=0
+typeset -gi _wez_state_seq=0
+typeset -gi _wez_cwd_seq=0
+_wez_publish_state() {
+  (( ++_wez_state_seq ))
+  _wez_set_user_vars "$@" state_serial "$_wez_state_seq"
+}
+
+_wez_prompt_ready() {
+  # OSC 7 is parsed first; state_serial then commits one coherent repaint.
+  _wez_emit_cwd
+  _wez_publish_state \
+    shell_integration on \
+    shell_name zsh \
+    shell_prompt on \
+    process_name zsh \
+    command_token '' \
+    nvim off \
+    zsh on
+}
+
+_wez_preexec() {
+  emulate -L zsh
+  local -a words
+  words=(${(z)1})
+  local token command=command
+  for token in "${words[@]}"; do
+    token=${(Q)token}
+    # Leading NAME=value words alter the command environment; they are not
+    # the process label. Parsing beyond this remains deliberately best-effort
+    # display metadata and is never used to route a destructive action.
+    if [[ $token == *=* && $token != */* ]]; then
+      continue
+    fi
+    command=$token
+    break
+  done
+  command=${command:t}
+  command=${command:l}
+  command=${command%.exe}
+  command=${command//[^A-Za-z0-9_.+-]/}
+  [[ -n $command ]] || command=command
+  (( ++_wez_command_seq ))
+  # Opaque identity only; elapsed time starts when WezTerm receives it. No
+  # wall-clock timestamp crosses this protocol.
+  _wez_publish_state \
+    shell_prompt off \
+    process_name "$command" \
+    command_token "$$:$_wez_command_seq"
+}
+
 autoload -Uz add-zsh-hook
-# on exit     base64('off') = 'b2Zm'
-_z_wez_zshexit() { set_user_var zsh b2Zm }
+add-zsh-hook precmd _wez_prompt_ready
+add-zsh-hook preexec _wez_preexec
+_z_wez_zshexit() {
+  _wez_publish_state \
+    shell_prompt off \
+    command_token '' \
+    process_name '' \
+    shell_integration off \
+    zsh off
+}
 add-zsh-hook zshexit _z_wez_zshexit
+
+# Establish a conservative state before the first precmd hook and clear flags
+# a process killed in this pane may have left behind.
+_wez_publish_state \
+  shell_integration on \
+  shell_name zsh \
+  shell_prompt off \
+  process_name zsh \
+  command_token '' \
+  zsh on \
+  fzf off \
+  nvim off
 
 # special Windows-specific cases for msys64/usr/bin/zsh.exe
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$MSYSTEM" != "" || "$WSL_DISTRO_NAME" != "" ]]; then
