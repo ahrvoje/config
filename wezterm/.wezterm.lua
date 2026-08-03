@@ -579,9 +579,24 @@ local action_kill_process = function(window, pane)
     return
   end
 
+  -- Capture only the pane id across the delay. Holding the pane userdata is
+  -- unsafe: if the pane dies before the timer fires, method calls on it abort
+  -- the timer's coroutine outside any pcall ("cannot resume dead coroutine").
+  local pane_id = get_pane_cache_id(pane)
+  if type(pane_id) ~= 'number' then
+    -- Cannot re-verify the target later; the graceful kill was already sent,
+    -- so skip the forced follow-up rather than escalate blindly.
+    return
+  end
+
   wezterm.time.call_after(0.5, function()
     local ok, err = pcall(function()
-      local current = get_windows_kill_target(pane)
+      local ok_pane, live_pane = pcall(wezterm.mux.get_pane, pane_id)
+      if not ok_pane or not live_pane then
+        -- Pane closed during the delay: nothing to verify, do not force-kill.
+        return
+      end
+      local current = get_windows_kill_target(live_pane)
       if same_windows_kill_target(target, current) then
         background_windows_taskkill(target, true)
       end
@@ -1358,11 +1373,25 @@ local function refresh_spawned_window_status(mux_window, pane, delay_seconds)
   if not mux_window or not pane then
     return
   end
+  -- Capture only plain ids across the delay. Userdata held over a timer can
+  -- outlive its window/pane, and method calls on the dead object abort the
+  -- timer's coroutine outside any pcall ("cannot resume dead coroutine").
+  local ok_id, window_id = pcall(function() return mux_window:window_id() end)
+  local pane_id = get_pane_cache_id(pane)
+  if not ok_id or type(window_id) ~= 'number' or type(pane_id) ~= 'number' then
+    return
+  end
   wezterm.time.call_after(delay_seconds, function()
     local ok, err = pcall(function()
-      local ok_gui, gui_window = pcall(mux_window.gui_window, mux_window)
+      local ok_win, live_window = pcall(wezterm.mux.get_window, window_id)
+      local ok_pane, live_pane = pcall(wezterm.mux.get_pane, pane_id)
+      if not ok_win or not live_window or not ok_pane or not live_pane then
+        -- Window or pane closed during the delay: nothing left to refresh.
+        return
+      end
+      local ok_gui, gui_window = pcall(live_window.gui_window, live_window)
       if ok_gui and gui_window and refresh_window_status then
-        refresh_window_status(gui_window, pane)
+        refresh_window_status(gui_window, live_pane)
       end
     end)
     if not ok then
