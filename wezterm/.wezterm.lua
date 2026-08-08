@@ -398,9 +398,36 @@ local exit_cmd = act.Multiple {
   act.SendString 'exit\r',
 }
 
+-- Windows console REPLs do not treat Ctrl-D as EOF and publish no user vars,
+-- and one started from the cmd prompt inherits Clink's stale ones, so resolve
+-- it from the foreground process. Queried only on the explicit Esc and Ctrl-D
+-- keystrokes, never from paint, status or navigation; remote panes have no
+-- local process info and stay pass-through.
+local function console_repl(pane)
+  local ok, info = pcall(function() return pane:get_foreground_process_info() end)
+  if not ok or type(info) ~= 'table' then return nil end
+  local name = tostring(info.name):lower():match('([^/\\]+)$')
+  if name == 'pwsh.exe' or name == 'powershell.exe' then return 'powershell' end
+  if name ~= 'python.exe' and name ~= 'python3.exe' then return nil end
+  local argv = type(info.argv) == 'table' and info.argv or {}
+  if #argv == 1 then return 'python' end
+  return #argv == 2 and tostring(argv[2]):lower():match('ptpython') and 'ptpython' or nil
+end
+
+local repl_exits = {
+  powershell = exit_cmd,  -- PSReadLine leaves Ctrl-D unbound in Windows mode
+  python     = act.SendString 'exit()\r',
+  ptpython   = act.SendString 'exit()\n',
+}
+
 local action_exit_shell = function(window, pane)
-  local shell, at_prompt = pane_prompt_context(pane)
-  window:perform_action(shell == 'cmd' and at_prompt and exit_cmd or send_key('d', 'CTRL'), pane)
+  local shell, at_prompt, integrated = pane_prompt_context(pane)
+  if shell == 'cmd' and at_prompt then
+    window:perform_action(exit_cmd, pane)
+    return
+  end
+  local repl = not (integrated and at_prompt) and console_repl(pane) or nil
+  window:perform_action(repl and repl_exits[repl] or send_key('d', 'CTRL'), pane)
 end
 
 local function debug_section(context, data)
@@ -698,9 +725,13 @@ local action_Esc = function(window, pane)
   elseif integrated and at_prompt then
     window:perform_action(clear_shell_line, pane)
   else
-    -- Unknown and remote panes are pass-through. Never infer a shell from a
-    -- process name or scrape the visible line to decide what Escape means.
-    window:perform_action(plain_escape, pane)
+    -- A console REPL owns its line editor but publishes nothing. Everything
+    -- else, remote panes included, is pass-through; never scrape the visible
+    -- line to decide what Escape means.
+    local repl = console_repl(pane)
+    window:perform_action(
+      repl == 'powershell' and clear_cmd_line or repl and clear_shell_line or plain_escape,
+      pane)
   end
 end
 

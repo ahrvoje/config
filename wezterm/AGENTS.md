@@ -48,7 +48,9 @@ shell behavior.
 
 - `format_right_status`, `format-tab-title`, and ordinary per-keystroke
   callbacks may read only PaneInformation snapshots, user variables, and Lua
-  memory. The explicit Windows `LEADER+k` kill action is the sole exception.
+  memory. The explicit `LEADER+k`, Esc and Ctrl-D keystrokes are the only
+  exceptions; the latter two call `console_repl`, because a console REPL has no
+  producer and one started from the cmd prompt inherits Clink's stale user vars.
 - Never call `get_foreground_process_info`, `wezterm.procinfo`, battery APIs,
   filesystem probes, mux-wide enumeration, child processes, or CLI commands
   from paint/status/key paths.
@@ -76,11 +78,12 @@ shell behavior.
 ## Actions and Safety
 
 - Ctrl-C copies a selection or sends interrupt.
-- Esc clears a line only at an authoritative integrated prompt. It sends a
-  real Escape to unknown/remote panes and alternate-screen apps, Ctrl-G to
-  shell-owned fzf overlays, and Win32 input records to Clink popups.
-- Ctrl-D uses native terminal EOF except at an authoritative cmd prompt, where
-  it clears the buffer and submits `exit`.
+- Esc clears a line at an authoritative integrated prompt or a console REPL. It
+  sends a real Escape to unknown/remote panes and alternate-screen apps, Ctrl-G
+  to shell-owned fzf overlays, and Win32 input records to Clink popups.
+- Ctrl-D uses native terminal EOF only where the shell honours it. cmd and
+  PowerShell clear the buffer and submit `exit`; `python` and `ptpython` submit
+  `exit()`. Keep `repl_exits` as the single table of these special cases.
 - Ctrl-L always sends the Ctrl-L key; never append a textual `clear` command to
   a possibly non-empty shell buffer.
 - On Windows `LEADER+k` queries the foreground process only when pressed, runs
