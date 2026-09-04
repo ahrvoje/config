@@ -130,6 +130,7 @@ _wez_prompt_ready() {
     process_name zsh \
     command_token '' \
     nvim off \
+    venv ${${VIRTUAL_ENV:+on}:-off} \
     zsh on
 }
 
@@ -186,7 +187,8 @@ _wez_publish_state \
   command_token '' \
   zsh on \
   fzf off \
-  nvim off
+  nvim off \
+  venv ${${VIRTUAL_ENV:+on}:-off}
 
 # special Windows-specific cases for msys64/usr/bin/zsh.exe
 if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$MSYSTEM" != "" || "$WSL_DISTRO_NAME" != "" ]]; then
@@ -433,21 +435,6 @@ zle -N fzf_history_search
 # Bind to Alt-r
 bindkey -M emacs '^[r' fzf_history_search
 bindkey -M viins '^[r' fzf_history_search
-
-# starship, init cached to avoid a starship spawn on every shell start
-if (( $+commands[starship] )); then
-  _starship_init=${XDG_CACHE_HOME:-$HOME/.cache}/starship-init.zsh
-  if [[ ! -s $_starship_init || $commands[starship] -nt $_starship_init ]]; then
-    mkdir -p -- "${_starship_init:h}"
-    starship init zsh --print-full-init >| "$_starship_init"
-  fi
-  # regenerate once if a stale or foreign-environment cache fails to source
-  if ! source "$_starship_init"; then
-    starship init zsh --print-full-init >| "$_starship_init"
-    source "$_starship_init"
-  fi
-  unset _starship_init
-fi
 
 # show active python venv at the start of the prompt, e.g. "(myenv) "
 export VIRTUAL_ENV_DISABLE_PROMPT=1  # venv activate must not edit PS1 itself

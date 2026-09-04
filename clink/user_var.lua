@@ -127,6 +127,7 @@ local function on_begin_edit()
     user_var('process_name', 'cmd'),
     user_var('command_token', ''),
     user_var('nvim', 'off'),
+    user_var('venv', os.getenv('VIRTUAL_ENV') and 'on' or 'off'),
     user_var('fzf', 'off'),
     user_var('clink_popup', 'off'),
     user_var('clink', 'on'),

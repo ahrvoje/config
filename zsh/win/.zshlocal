@@ -9,6 +9,5 @@ path+=(
     /c/Users/H/AppData/Local/Programs/utils/
     /c/Users/H/AppData/Local/Programs/clink/
     /c/Users/H/AppData/Local/Programs/nvim/bin/
-    /c/Users/H/AppData/Local/Programs/starship/
 )
 export PATH

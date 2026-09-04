@@ -1,63 +1,53 @@
 local wezterm = require 'wezterm'
 local act = wezterm.action
 local cb = wezterm.action_callback
+local nf = wezterm.nerdfonts
 local is_windows = wezterm.target_triple:match('windows') ~= nil
 local config = wezterm.config_builder()
 
--- Small helpers used throughout the config.
+--------------HELPERS--------------
 
 local function send_key(key, mods)
   return act.SendKey { key = key, mods = mods or 'NONE' }
 end
 
--- A monotonicized UI clock. WezTerm exposes UTC wall time rather than a
--- monotonic clock to Lua, so reject backward steps and cap discontinuities.
--- Normal sub-second/one-second progress remains accurate; suspend or manual
--- clock corrections cannot freeze a cache or instantly skip a settle period.
-local ui_clock_state = { raw = nil, logical = 0 }
-local function raw_clock_seconds()
-  local ok, value = pcall(function()
+-- Call a method on a mux object and return nil instead of raising. The GUI
+-- can still hold a pane or window that already left the mux.
+local function try(object, method, ...)
+  if object == nil then
+    return nil
+  end
+  local ok, result = pcall(object[method], object, ...)
+  return ok and result or nil
+end
+
+-- Seconds from a clock that never runs backwards. WezTerm gives Lua only
+-- wall-clock time; a wall-clock correction must not make an elapsed time or
+-- a cache age negative.
+local last_clock = 0
+local function clock()
+  local ok, now = pcall(function()
     return tonumber(wezterm.time.now():format_utc('%s%.3f'))
   end)
-  return ok and value or nil
+  if ok and now and now > last_clock then
+    last_clock = now
+  end
+  return last_clock
 end
 
-local function clock_seconds()
-  local raw = raw_clock_seconds()
-  if not raw then
-    return ui_clock_state.logical
-  end
-  if ui_clock_state.raw ~= nil then
-    local delta = raw - ui_clock_state.raw
-    if delta >= 0 then
-      -- One-second status ticks are normal. A larger jump is a suspend or
-      -- wall-clock correction; advance only slightly so TTLs and the title
-      -- settle guard cannot all expire in one distracting repaint.
-      ui_clock_state.logical = ui_clock_state.logical + (delta <= 2 and delta or 0.25)
-    end
-  end
-  ui_clock_state.raw = raw
-  return ui_clock_state.logical
-end
-
-local warning_last_logged = {}
-local function log_warn_rate_limited(key, message, interval_seconds)
-  local now = clock_seconds()
-  local last = warning_last_logged[key]
-  if last and (now - last) < (interval_seconds or 60) then
+-- For warnings raised from paint paths, which repeat every second.
+local warned_at = {}
+local function warn_rate_limited(key, message)
+  local now = clock()
+  if warned_at[key] and now - warned_at[key] < 60 then
     return
   end
-  warning_last_logged[key] = now
+  warned_at[key] = now
   wezterm.log_warn(message)
 end
 
-local function is_stale_mux_object_error(err)
-  local text = tostring(err)
-  return text:match('not found in mux') ~= nil
-end
-
---------------DEFAULT CONFIGURATION--------------
--- Shared defaults plus optional per-machine overrides.
+--------------DEFAULT AND LOCAL CONFIGURATION--------------
+-- Shared defaults; `wezterm_local` overrides them per machine.
 
 local default_config = {
   leader                  = { key = 'q', mods = 'ALT', timeout_milliseconds = 9999 },
@@ -68,8 +58,8 @@ local default_config = {
   cursor_blink_ease_out   = 'Constant',
   max_fps                 = 60,
   scrollback_lines        = 50000,
-  -- The right status changes at one-second resolution. Prompt/process/CWD
-  -- transitions repaint immediately via user-var-changed.
+  -- The right status changes at one-second resolution. Prompt, process and
+  -- CWD transitions repaint immediately via user-var-changed.
   status_update_interval  = 1000,
   -- font                 = nil,
   -- font_size            = nil,
@@ -80,138 +70,28 @@ local default_config = {
   window_pos              = { x = 175, y = 30 },  -- initial window position
 }
 
--------------------------------------------------
-
----------------LOCAL CONFIGURATION---------------
-
-local function prequire(m) 
-  local ok, response = pcall(require, m)
+local function prequire(name)
+  local ok, module = pcall(require, name)
   if not ok then
-    local err = tostring(response)
-    -- Treat missing optional local module as normal; warn on all other load failures.
-    if not string.find(err, "module '" .. m .. "' not found", 1, true) then
-      wezterm.log_warn('Failed to load "' .. m .. '": ' .. err)
+    -- A missing local module is normal; report every other load failure.
+    if not tostring(module):find("module '" .. name .. "' not found", 1, true) then
+      wezterm.log_warn('Failed to load "' .. name .. '": ' .. tostring(module))
     end
     return {}
   end
-  if type(response) ~= 'table' then
-    wezterm.log_warn('Module "' .. m .. '" must return a table; using defaults')
+  if type(module) ~= 'table' then
+    wezterm.log_warn('Module "' .. name .. '" must return a table; using defaults')
     return {}
   end
-  return response
+  return module
 end
 local local_config = prequire 'wezterm_local'
 
-local function configured_value(key)
+local function configured(key)
   if local_config[key] ~= nil then
     return local_config[key]
   end
   return default_config[key]
-end
-
-local function get_configured_window_position()
-  local default_pos = type(default_config.window_pos) == 'table' and default_config.window_pos or {}
-  local local_pos = type(local_config.window_pos) == 'table' and local_config.window_pos or {}
-  return {
-    x = local_pos.x ~= nil and local_pos.x or default_pos.x,
-    y = local_pos.y ~= nil and local_pos.y or default_pos.y,
-    origin = local_pos.origin ~= nil and local_pos.origin or default_pos.origin,
-  }
-end
-
-local function get_screen_bounds(origin, x, y)
-  if not wezterm.gui or type(wezterm.gui.screens) ~= 'function' then
-    return nil
-  end
-  local ok, screens = pcall(wezterm.gui.screens)
-  if not ok or type(screens) ~= 'table' then
-    log_warn_rate_limited('screens', 'Failed to read screen bounds: ' .. tostring(screens))
-    return nil
-  end
-  local screen
-  local relative_coordinates = false
-  if origin == 'MainScreen' then
-    screen = screens.main
-    relative_coordinates = true
-  elseif origin == 'ActiveScreen' then
-    screen = screens.active or screens.main
-    relative_coordinates = true
-  elseif type(origin) == 'table' and type(origin.Named) == 'string' then
-    screen = type(screens.by_name) == 'table' and screens.by_name[origin.Named] or nil
-    relative_coordinates = true
-  else
-    -- ScreenCoordinateSystem coordinates are absolute. Preserve a valid
-    -- position on a non-active monitor by selecting the screen that contains
-    -- it; fall back to the active screen only for stale/off-desktop values.
-    if type(screens.by_name) == 'table' and type(x) == 'number' and type(y) == 'number' then
-      for _, candidate in pairs(screens.by_name) do
-        if type(candidate) == 'table'
-            and type(candidate.x) == 'number' and type(candidate.y) == 'number'
-            and type(candidate.width) == 'number' and type(candidate.height) == 'number'
-            and x >= candidate.x and x < candidate.x + candidate.width
-            and y >= candidate.y and y < candidate.y + candidate.height then
-          screen = candidate
-          break
-        end
-      end
-    end
-    screen = screen or screens.active or screens.main
-  end
-  if type(screen) ~= 'table' then
-    return nil
-  end
-  if type(screen.x) ~= 'number' or type(screen.y) ~= 'number'
-      or type(screen.width) ~= 'number' or type(screen.height) ~= 'number' then
-    return nil
-  end
-  return {
-    x = relative_coordinates and 0 or screen.x,
-    y = relative_coordinates and 0 or screen.y,
-    width = screen.width,
-    height = screen.height,
-  }
-end
-
-local function clamp_number(value, min_value, max_value)
-  if max_value < min_value then
-    max_value = min_value
-  end
-  return math.max(min_value, math.min(max_value, value))
-end
-
-local function clamp_window_position(position)
-  if type(position) ~= 'table' or type(position.x) ~= 'number' or type(position.y) ~= 'number' then
-    return position
-  end
-  local origin = position.origin
-  local valid_origin = origin == nil or origin == 'ScreenCoordinateSystem'
-    or origin == 'MainScreen' or origin == 'ActiveScreen'
-    or (type(origin) == 'table' and type(origin.Named) == 'string')
-  if not valid_origin then
-    log_warn_rate_limited('window-origin', 'Ignoring invalid window_pos.origin: ' .. tostring(origin))
-    origin = nil
-  end
-  local clamped = {}
-  for k, v in pairs(position) do
-    clamped[k] = v
-  end
-  clamped.origin = origin
-  local bounds = get_screen_bounds(origin, position.x, position.y)
-  if not bounds and type(origin) == 'table' and type(origin.Named) == 'string' then
-    -- A monitor can disappear between machines/docks. Preserve a usable
-    -- startup by interpreting its relative coordinates on the active screen.
-    log_warn_rate_limited('window-origin-missing', 'Named startup screen is unavailable: ' .. origin.Named)
-    origin = 'ActiveScreen'
-    clamped.origin = origin
-    bounds = get_screen_bounds(origin)
-  end
-  if not bounds then
-    return clamped
-  end
-  local visible_margin = 80
-  clamped.x = clamp_number(position.x, bounds.x, bounds.x + bounds.width - visible_margin)
-  clamped.y = clamp_number(position.y, bounds.y, bounds.y + bounds.height - visible_margin)
-  return clamped
 end
 
 for _, key in ipairs {
@@ -232,10 +112,9 @@ for _, key in ipairs {
   'status_update_interval',
   'set_environment_variables',
 } do
-  config[key] = configured_value(key)
+  config[key] = configured(key)
 end
--- local_config.keys applied after config.keys
--------------------------------------------------
+-- local_config.keys is appended after config.keys, see below.
 
 config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
@@ -245,28 +124,22 @@ if is_windows then
   -- produces blank lines in non-bracketed WSL pastes.
   -- wsl.exe strips Windows env vars from the guest unless WSLENV forwards
   -- them; forward WEZTERM_PANE so WSL shells can detect they run in wezterm
-  -- (zsh keys its OSC 1337 user-var emission off it)
+  -- (zsh keys its OSC 1337 user-var emission off it).
   local env = {}
-  local configured_env = configured_value('set_environment_variables')
-  if type(configured_env) == 'table' then
-    for k, v in pairs(configured_env) do
-      env[k] = v
+  for k, v in pairs(configured('set_environment_variables') or {}) do
+    env[k] = v
+  end
+  local wslenv = tostring(env.WSLENV or os.getenv('WSLENV') or '')
+  local forwarded = false
+  for entry in wslenv:gmatch('[^:]+') do
+    if (entry:match('^[^/]+') or ''):upper() == 'WEZTERM_PANE' then
+      forwarded = true
     end
   end
-  local wslenv = env.WSLENV ~= nil and tostring(env.WSLENV) or os.getenv('WSLENV')
-  local parts = {}
-  local has_wezterm_pane = false
-  for part in tostring(wslenv or ''):gmatch('[^:]+') do
-    parts[#parts + 1] = part
-    local name = part:match('^([^/]+)')
-    if name and name:upper() == 'WEZTERM_PANE' then
-      has_wezterm_pane = true
-    end
+  if not forwarded then
+    wslenv = wslenv == '' and 'WEZTERM_PANE/u' or wslenv .. ':WEZTERM_PANE/u'
   end
-  if not has_wezterm_pane then
-    parts[#parts + 1] = 'WEZTERM_PANE/u'
-  end
-  env.WSLENV = table.concat(parts, ':')
+  env.WSLENV = wslenv
   config.set_environment_variables = env
 end
 config.check_for_updates = false
@@ -292,111 +165,134 @@ config.color_scheme = 'Bright (base16)'
 -- config.colors                = { scrollbar_thumb = '#556666' }
 -- config.window_padding        = { left = 8, right = 16, top = 4, bottom = 4 }  -- right padding is scrollbar width
 
---------------PATH AND PANE-STATE HELPERS--------------
+--------------STARTUP WINDOW POSITION--------------
+
+local function configured_window_position()
+  local default_pos = default_config.window_pos
+  local local_pos = local_config.window_pos or {}
+  return {
+    x = local_pos.x or default_pos.x,
+    y = local_pos.y or default_pos.y,
+    origin = local_pos.origin or default_pos.origin,
+  }
+end
+
+-- The screen area a startup position is clamped into. A position with an
+-- origin is relative to that screen. An absolute position keeps the screen
+-- that contains it, so a window can start on a secondary monitor; a stale
+-- off-desktop value falls back to the active screen.
+local function screen_bounds(origin, x, y)
+  local ok, screens = pcall(wezterm.gui.screens)
+  if not ok then
+    wezterm.log_warn('Failed to read screen bounds: ' .. tostring(screens))
+    return nil
+  end
+  local screen
+  if origin == 'MainScreen' then
+    screen = screens.main
+  elseif origin == 'ActiveScreen' then
+    screen = screens.active or screens.main
+  elseif type(origin) == 'table' then
+    screen = screens.by_name[origin.Named]
+  else
+    for _, candidate in pairs(screens.by_name) do
+      if x >= candidate.x and x < candidate.x + candidate.width
+          and y >= candidate.y and y < candidate.y + candidate.height then
+        screen = candidate
+        break
+      end
+    end
+    screen = screen or screens.active or screens.main
+    return screen and { x = screen.x, y = screen.y, width = screen.width, height = screen.height }
+  end
+  return screen and { x = 0, y = 0, width = screen.width, height = screen.height }
+end
+
+local function clamp(value, min_value, max_value)
+  return math.max(min_value, math.min(math.max(min_value, max_value), value))
+end
+
+local function clamp_window_position(position)
+  if type(position.x) ~= 'number' or type(position.y) ~= 'number' then
+    return position
+  end
+  local origin = position.origin
+  local named = type(origin) == 'table' and type(origin.Named) == 'string'
+  if not (origin == nil or origin == 'ScreenCoordinateSystem'
+      or origin == 'MainScreen' or origin == 'ActiveScreen' or named) then
+    wezterm.log_warn('Ignoring invalid window_pos.origin: ' .. tostring(origin))
+    origin, named = nil, false
+  end
+  local bounds = screen_bounds(origin, position.x, position.y)
+  if not bounds and named then
+    -- A monitor can disappear between machines and docks. Interpret its
+    -- relative coordinates on the active screen instead.
+    wezterm.log_warn('Named startup screen is unavailable: ' .. origin.Named)
+    origin = 'ActiveScreen'
+    bounds = screen_bounds(origin)
+  end
+  if not bounds then
+    return { x = position.x, y = position.y, origin = origin }
+  end
+  local visible_margin = 80
+  return {
+    x = clamp(position.x, bounds.x, bounds.x + bounds.width - visible_margin),
+    y = clamp(position.y, bounds.y, bounds.y + bounds.height - visible_margin),
+    origin = origin,
+  }
+end
+
+--------------PANE STATE--------------
+-- Shell and application integrations publish their state as OSC 1337 user
+-- vars (see ../zsh/.zshrc, ../clink/user_var.lua, ../nvim/init.lua). The GUI
+-- never discovers processes itself, except on the explicit keystrokes noted
+-- below.
 
 -- Equivalent to POSIX basename(3)
 -- '/foo/bar'         -> 'bar'
 -- '/foo/bar/'        -> ''
 -- 'c:\\foo\\bar'     -> 'bar'
 -- 'C:\\foo\\bar.exe' -> 'bar.exe'
-
-local function get_basename(s)
+local function basename(s)
   s = s:gsub('[/\\]+$', '')
   return s:match('([^/\\]+)$')
 end
 
--- Normalize a file URI without dropping the leading slash on Unix or the UNC
--- marker on Windows. Current WezTerm Url objects expose file_path directly;
--- this string path remains for compatibility with older builds.
-
+-- Turn a file URI into a display path. Keeps the leading slash on Unix and
+-- the UNC marker on Windows.
 local function normalize_path(path)
-  if type(path) ~= 'string' then
-    return ''
-  end
-  local npath = path
-  npath = npath:gsub('^file://', '')
-  npath = npath:gsub('%%(%x%x)', function(h) return string.char(tonumber(h,16)) end)
+  path = path:gsub('^file://', '')
+  path = path:gsub('%%(%x%x)', function(hex) return string.char(tonumber(hex, 16)) end)
   if is_windows then
-    npath = npath:gsub('^/([A-Za-z]:)', '%1')
-    if npath:sub(1, 2) == '//' then
-      npath = npath:gsub('/', '\\')
+    path = path:gsub('^/([A-Za-z]:)', '%1')
+    if path:sub(1, 2) == '//' then
+      path = path:gsub('/', '\\')
     end
   end
-  return npath
+  return path
 end
 
-local function get_pane_cache_id(pane)
-  if not pane then
-    return nil
-  end
-  local ok_field, pane_id_field = pcall(function() return pane.pane_id end)
-  if not ok_field then
-    return nil
-  end
-  if type(pane_id_field) == 'function' then
-    local ok, pane_id = pcall(pane_id_field, pane)
-    if ok then
-      return pane_id
-    end
-    return nil
-  end
-  return pane_id_field
+local function is_alt_screen(pane)
+  return try(pane, 'is_alt_screen_active') == true
 end
 
-local function read_pane_user_vars(pane)
-  if not pane then
-    return {}
-  end
-  local ok_field, getter = pcall(function() return pane.get_user_vars end)
-  if not ok_field or type(getter) ~= 'function' then
-    return {}
-  end
-  local ok, user_vars = pcall(getter, pane)
-  return ok and type(user_vars) == 'table' and user_vars or {}
-end
-
-local function prompt_context_from_user_vars(user_vars)
-  local integrated = user_vars.shell_integration == 'on'
-  local at_prompt = integrated and user_vars.shell_prompt == 'on'
-  local shell = user_vars.shell_name
+-- What the integration says about a pane. `at_prompt` is true only while an
+-- integrated shell owns the line editor: a running command, a remote pane and
+-- a program without integration all leave it false and receive raw keys.
+local function shell_context(pane)
+  local vars = try(pane, 'get_user_vars') or {}
+  local integrated = vars.shell_integration == 'on'
+  local shell = vars.shell_name
   if shell == nil or shell == '' then
-    shell = user_vars.clink == 'on' and 'cmd' or user_vars.zsh == 'on' and 'zsh' or nil
+    shell = vars.clink == 'on' and 'cmd' or vars.zsh == 'on' and 'zsh' or nil
   end
-  return shell, at_prompt, integrated, user_vars
+  return {
+    vars = vars,
+    shell = shell,
+    integrated = integrated,
+    at_prompt = integrated and vars.shell_prompt == 'on',
+  }
 end
-
-local function pane_prompt_context(pane)
-  return prompt_context_from_user_vars(read_pane_user_vars(pane))
-end
-
---------------CONTEXT-AWARE KEY ACTIONS--------------
-
---------------------------------------------------------------------------------
--- 'Ctrl-c' key has two roles:
---   KeyboardInterrupt if there is no selection
---   Copy to clipboard if selection is available
-
-local action_ctrl_c = function(window, pane)
-  local sel = window:get_selection_text_for_pane(pane)
-  if not sel or sel == '' then
-    window:perform_action(send_key('c', 'CTRL'), pane)
-  else
-    window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
-  end
-end
-
---------------------------------------------------------------------------------
--- 'Ctrl-d' keeps native EOF/DeleteCharOrExit semantics. cmd.exe has no useful
--- Ctrl-D contract, so its prompt integration explicitly clears and exits.
-local clear_cmd_line = act.Multiple {
-  send_key('End'),
-  send_key('Home', 'SHIFT'),
-  send_key('Delete'),
-}
-local exit_cmd = act.Multiple {
-  clear_cmd_line,
-  act.SendString 'exit\r',
-}
 
 -- Windows console REPLs do not treat Ctrl-D as EOF and publish no user vars,
 -- and one started from the cmd prompt inherits Clink's stale ones, so resolve
@@ -404,8 +300,8 @@ local exit_cmd = act.Multiple {
 -- keystrokes, never from paint, status or navigation; remote panes have no
 -- local process info and stay pass-through.
 local function console_repl(pane)
-  local ok, info = pcall(function() return pane:get_foreground_process_info() end)
-  if not ok or type(info) ~= 'table' then return nil end
+  local info = try(pane, 'get_foreground_process_info')
+  if type(info) ~= 'table' then return nil end
   local name = tostring(info.name):lower():match('([^/\\]+)$')
   if name == 'pwsh.exe' or name == 'powershell.exe' then return 'powershell' end
   if name ~= 'python.exe' and name ~= 'python3.exe' then return nil end
@@ -414,406 +310,320 @@ local function console_repl(pane)
   return #argv == 2 and tostring(argv[2]):lower():match('ptpython') and 'ptpython' or nil
 end
 
+--------------CONTEXT-AWARE KEY ACTIONS--------------
+
+-- 'Ctrl-c' interrupts when nothing is selected, otherwise copies the selection.
+local function action_ctrl_c(window, pane)
+  local selection = window:get_selection_text_for_pane(pane)
+  if selection == '' then
+    window:perform_action(send_key('c', 'CTRL'), pane)
+  else
+    window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
+  end
+end
+
+-- Line-clearing sequences. cmd.exe has no Ctrl-A/Ctrl-K, so it gets keys.
+local clear_cmd_line = act.Multiple {
+  send_key('End'),
+  send_key('Home', 'SHIFT'),
+  send_key('Delete'),
+}
+local clear_shell_line = act.SendString '\x01\x0b'  -- Ctrl-A Ctrl-K
+
+-- 'Ctrl-d' keeps native EOF semantics where the shell honours it. At an
+-- integrated prompt an active Python venv is deactivated first; cmd.exe,
+-- PowerShell and the Python REPLs get an explicit exit command because they
+-- ignore Ctrl-D. The line is cleared first so pending input never merges into
+-- the command.
+local exit_cmd = act.Multiple { clear_cmd_line, act.SendString 'exit\r' }
+local deactivate_venv_cmd = act.Multiple { clear_cmd_line, act.SendString 'deactivate\r' }
+local deactivate_venv_shell = act.SendString '\x01\x0bdeactivate\r'
 local repl_exits = {
   powershell = exit_cmd,  -- PSReadLine leaves Ctrl-D unbound in Windows mode
   python     = act.SendString 'exit()\r',
   ptpython   = act.SendString 'exit()\n',
 }
 
-local action_exit_shell = function(window, pane)
-  local shell, at_prompt, integrated = pane_prompt_context(pane)
-  if shell == 'cmd' and at_prompt then
-    window:perform_action(exit_cmd, pane)
-    return
+local function action_exit_shell(window, pane)
+  local ctx = shell_context(pane)
+  local action
+  if ctx.at_prompt and ctx.vars.venv == 'on' then
+    action = ctx.shell == 'cmd' and deactivate_venv_cmd or deactivate_venv_shell
+  elseif ctx.at_prompt and ctx.shell == 'cmd' then
+    action = exit_cmd
+  else
+    local repl = not ctx.at_prompt and console_repl(pane)
+    action = repl and repl_exits[repl] or send_key('d', 'CTRL')
   end
-  local repl = not (integrated and at_prompt) and console_repl(pane) or nil
-  window:perform_action(repl and repl_exits[repl] or send_key('d', 'CTRL'), pane)
+  window:perform_action(action, pane)
 end
 
-local function debug_section(context, data)
-  return data and { context = context, data = data } or nil
+-- 'Esc' clears the line at an integrated prompt or in a console REPL, and is
+-- a real Escape for full-screen apps, overlays and unknown panes.
+local plain_escape = send_key('Escape')
+local fzf_escape = send_key('g', 'CTRL')  -- fzf's abort key, works across WSL/MSYS boundaries
+-- ConPTY holds a bare \x1b as a possible escape-sequence prefix, so a
+-- synthesized plain Escape never reaches console apps as VK_ESCAPE. Encode
+-- the press as explicit win32-input-mode key events (CSI Vk;Sc;Uc;Kd;Cs;Rc _),
+-- which ConPTY translates deterministically into VK_ESCAPE INPUT_RECORDs;
+-- that is what Clink's popups listen for.
+local win32_escape = act.SendString '\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_'
+
+local function action_escape(window, pane)
+  local action
+  local ctx = shell_context(pane)
+  if window:leader_is_active() then
+    action = plain_escape
+  elseif ctx.vars.fzf == 'on' then
+    -- The shell's fzf wrapper flags fzf ownership; inline fzf never enters
+    -- the alt screen.
+    action = fzf_escape
+  elseif ctx.vars.clink_popup == 'on' then
+    -- A Clink popup (e.g. the Rex selector) owns the pane; it must get an
+    -- Escape key event, not the cmd line-clear sequence.
+    action = win32_escape
+  elseif is_alt_screen(pane) then
+    action = plain_escape
+  elseif ctx.at_prompt then
+    action = ctx.shell == 'cmd' and clear_cmd_line or clear_shell_line
+  else
+    -- A console REPL owns its line editor but publishes nothing. Everything
+    -- else, remote panes included, is pass-through; never scrape the visible
+    -- line to decide what Escape means.
+    local repl = console_repl(pane)
+    action = repl == 'powershell' and clear_cmd_line or repl and clear_shell_line or plain_escape
+  end
+  window:perform_action(action, pane)
 end
 
---------------------------------------------------------------------------------
--- 'LEADER + l' logs pane snapshots, user vars, and local config info into the
--- debug overlay for quick diagnostics.
-
-local action_log_debug_info = function(window, pane)
+-- 'LEADER + l' logs pane snapshots, user vars and local config into the debug
+-- overlay for quick diagnostics.
+local function action_log_debug_info(window, pane)
+  local pane_id = pane:pane_id()
   local pane_info
-  local ok_tab, tab = pcall(function() return pane:tab() end)
-  if ok_tab and tab then
-    local pane_id = get_pane_cache_id(pane)
-    local ok_panes, panes = pcall(function() return tab:panes_with_info() end)
-    for _, info in ipairs(ok_panes and panes or {}) do
-      if get_pane_cache_id(info.pane) == pane_id then
-        pane_info = info
-        break
-      end
+  local tab = try(pane, 'tab')
+  for _, entry in ipairs(tab and try(tab, 'panes_with_info') or {}) do
+    if entry.pane:pane_id() == pane_id then
+      pane_info = entry
     end
   end
-  local ok_vars, user_vars = pcall(function() return pane:get_user_vars() end)
-  local ok_metadata, metadata = pcall(function() return pane:get_metadata() end)
-  local ok_alt, alt_screen = pcall(function() return pane:is_alt_screen_active() end)
-  wezterm.log_info({
-    debug_section('Pane info', pane_info),
-    debug_section('Pane user vars', ok_vars and user_vars or nil),
-    debug_section('Pane metadata', ok_metadata and metadata or nil),
-    debug_section('Pane misc', {
-      { field = 'alt screen', value = ok_alt and tostring(alt_screen) or 'unavailable' },
-    }),
-    debug_section('Local configuration', local_config),
-  })
+  wezterm.log_info {
+    { context = 'Pane info', data = pane_info },
+    { context = 'Pane user vars', data = try(pane, 'get_user_vars') },
+    { context = 'Pane metadata', data = try(pane, 'get_metadata') },
+    { context = 'Pane misc', data = { { field = 'alt screen', value = tostring(try(pane, 'is_alt_screen_active')) } } },
+    { context = 'Local configuration', data = local_config },
+  }
 end
 
---------------------------------------------------------------------------------
--- Ctrl+Home/End and PageUp/PageDown switch between full-screen apps and
--- scrollback navigation.
-
+-- Navigation keys switch between full-screen apps and scrollback navigation.
 local function choose_action(predicate, true_action, false_action)
   return function(window, pane)
     window:perform_action(predicate(pane) and true_action or false_action, pane)
   end
 end
 
-local function pane_is_alt_screen(pane)
-  local ok, active = pcall(function() return pane:is_alt_screen_active() end)
-  return ok and active == true
+-- Alt-screen apps, fzf, Clink popups and anything that is not an integrated
+-- prompt get the real key; only an authoritative local prompt scrolls.
+local function wants_raw_nav_keys(pane)
+  local ctx = shell_context(pane)
+  return is_alt_screen(pane) or ctx.vars.fzf == 'on' or ctx.vars.clink_popup == 'on'
+    or not ctx.at_prompt
 end
 
--- Inline fzf selectors never enter the alt screen, so they don't expose
--- alternate-screen ownership.  The zsh and Clink integrations flag them via
--- an OSC 1337 user var while fzf owns the pane; get_user_vars is an in-memory
--- read, safe on per-keystroke paths.
-local function pane_fzf_active(pane, user_vars)
-  return (user_vars or read_pane_user_vars(pane)).fzf == 'on'
+-- Home/Up/Down are line-editor keys at a prompt and in unknown/remote panes;
+-- they scroll only while an integrated shell runs a command.
+local function has_shell_prompt(pane)
+  local ctx = shell_context(pane)
+  return not ctx.integrated or ctx.at_prompt
 end
 
--- Clink popups (Rex model/mode chooser, etc.) run inside cmd.exe's normal
--- screen and are not distinguishable from the line editor by terminal state.
--- The Clink side therefore flags popup ownership explicitly.
-local function pane_clink_popup_active(pane, user_vars)
-  return (user_vars or read_pane_user_vars(pane)).clink_popup == 'on'
-end
+local action_ctrl_home = choose_action(wants_raw_nav_keys, send_key('Home', 'CTRL'), act.ScrollToTop)
+local action_ctrl_end = choose_action(wants_raw_nav_keys, send_key('End', 'CTRL'), act.ScrollToBottom)
+local action_pageup = choose_action(wants_raw_nav_keys, send_key('PageUp'), act.ScrollByPage(-0.5))
+local action_pagedown = choose_action(wants_raw_nav_keys, send_key('PageDown'), act.ScrollByPage(0.5))
+local action_home = choose_action(has_shell_prompt, send_key('Home'), act.ScrollToTop)
+local action_up = choose_action(has_shell_prompt, send_key('UpArrow'), act.ScrollByLine(-1))
+local action_down = choose_action(has_shell_prompt, send_key('DownArrow'), act.ScrollByLine(1))
 
-local function pane_wants_raw_nav_keys(pane)
-  if pane_is_alt_screen(pane) then
-    return true
-  end
-  local user_vars = read_pane_user_vars(pane)
-  if pane_fzf_active(pane, user_vars) or pane_clink_popup_active(pane, user_vars) then
-    return true
-  end
-  local _shell, at_prompt, integrated = prompt_context_from_user_vars(user_vars)
-  -- Only an authoritative local prompt turns these into scrollback actions.
-  -- Commands, SSH/remote panes, and unknown integrations receive real keys.
-  return not (integrated and at_prompt)
-end
+--------------PROCESS TERMINATION--------------
+-- 'LEADER + k' is a Windows-only escape hatch for a wedged foreground
+-- process: taskkill /T, then taskkill /F after 0.5 s if the same process is
+-- still there. The synchronous process query runs only on this keystroke.
+-- Everywhere else, and for an idle integrated shell, it sends Ctrl-C.
 
-local function pane_has_shell(pane)
-  local _shell, at_prompt, integrated = pane_prompt_context(pane)
-  -- Unknown/remote panes get raw keys. Intercepting them as viewport actions
-  -- loses remote shell history/navigation and is less safe than pass-through.
-  return not integrated or at_prompt
-end
-
-local action_ctrl_home = choose_action(pane_wants_raw_nav_keys, send_key('Home', 'CTRL'), act.ScrollToTop)
-local action_ctrl_end = choose_action(pane_wants_raw_nav_keys, send_key('End', 'CTRL'), act.ScrollToBottom)
-local action_pageup = choose_action(pane_wants_raw_nav_keys, send_key('PageUp'), act.ScrollByPage(-0.5))
-local action_pagedown = choose_action(pane_wants_raw_nav_keys, send_key('PageDown'), act.ScrollByPage(0.5))
-
--- 'Home'/'Up'/'Down' have two roles:
---   Send the usual line-start/history keys if a shell prompt is active
---   Scroll the viewport if the pane is running something else
-
-local action_home = choose_action(pane_has_shell, send_key('Home'), act.ScrollToTop)
-local action_up = choose_action(pane_has_shell, send_key('UpArrow'), act.ScrollByLine(-1))
-local action_down = choose_action(pane_has_shell, send_key('DownArrow'), act.ScrollByLine(1))
-
---------------------------------------------------------------------------------
--- Clear screen action
-
-local action_clear_screen = function(window, pane)
-  window:perform_action(send_key('l', 'CTRL'), pane)
-end
-
---------------PROCESS AND PANE TERMINATION--------------
-
--- Windows-only escape hatch for a wedged foreground process. This synchronous
--- process query is intentionally confined to the explicit kill keystroke; it
--- is never called by paint/status/navigation paths.
-local function get_windows_kill_target(pane)
-  local ok, info = pcall(function() return pane:get_foreground_process_info() end)
-  if not ok or type(info) ~= 'table' or type(info.pid) ~= 'number' or info.pid < 1 then
+local function kill_target(pane)
+  local info = try(pane, 'get_foreground_process_info')
+  if type(info) ~= 'table' or type(info.pid) ~= 'number' or info.pid < 1 then
     return nil
   end
   return {
     pid = info.pid,
-    name = type(info.name) == 'string' and info.name:lower() or '',
-    executable = type(info.executable) == 'string' and info.executable:lower() or '',
-    -- Compare the raw value only. Its epoch/unit varies by platform, but
-    -- equality across two Windows queries is sufficient to reject PID reuse.
-    start_time = info.start_time,
+    name = tostring(info.name or ''):lower(),
+    executable = tostring(info.executable or ''):lower(),
+    start_time = info.start_time,  -- opaque; equal across two queries means no PID reuse
   }
 end
 
-local function same_windows_kill_target(left, right)
-  if not left or not right or left.pid ~= right.pid then
-    return false
-  end
-  if left.start_time ~= nil and right.start_time ~= nil
-      and left.start_time ~= right.start_time then
-    return false
-  end
-  if left.executable ~= '' and right.executable ~= ''
-      and left.executable ~= right.executable then
-    return false
-  end
-  return left.name == '' or right.name == '' or left.name == right.name
+local function same_kill_target(a, b)
+  if not a or not b or a.pid ~= b.pid then return false end
+  if a.start_time ~= nil and b.start_time ~= nil and a.start_time ~= b.start_time then return false end
+  if a.executable ~= '' and b.executable ~= '' and a.executable ~= b.executable then return false end
+  return a.name == '' or b.name == '' or a.name == b.name
 end
 
-local function background_windows_taskkill(target, force)
-  if not target or type(target.pid) ~= 'number' or target.pid < 1 then
-    return false
-  end
+local function taskkill(target, force)
   local args = { 'taskkill.exe', '/PID', tostring(target.pid), '/T' }
   if force then
     args[#args + 1] = '/F'
   end
   local ok, err = pcall(wezterm.background_child_process, args)
   if not ok then
-    log_warn_rate_limited('windows-taskkill', 'Failed to launch taskkill: ' .. tostring(err))
-    return false
+    wezterm.log_warn('Failed to launch taskkill: ' .. tostring(err))
   end
-  return true
+  return ok
 end
 
-local action_kill_process = function(window, pane)
-  if not is_windows then
+local function action_kill_process(window, pane)
+  local ctx = is_windows and shell_context(pane)
+  local target = ctx and not (ctx.shell and ctx.at_prompt) and kill_target(pane)
+  if not target or not taskkill(target, false) then
     window:perform_action(send_key('c', 'CTRL'), pane)
     return
   end
-
-  local shell, at_prompt = pane_prompt_context(pane)
-  if shell and at_prompt then
-    -- Do not destroy an idle integrated shell by accident.
-    window:perform_action(send_key('c', 'CTRL'), pane)
-    return
-  end
-
-  local target = get_windows_kill_target(pane)
-  if not target or not background_windows_taskkill(target, false) then
-    window:perform_action(send_key('c', 'CTRL'), pane)
-    return
-  end
-
-  -- Capture only the pane id across the delay. Holding the pane userdata is
-  -- unsafe: if the pane dies before the timer fires, method calls on it abort
-  -- the timer's coroutine outside any pcall ("cannot resume dead coroutine").
-  local pane_id = get_pane_cache_id(pane)
-  if type(pane_id) ~= 'number' then
-    -- Cannot re-verify the target later; the graceful kill was already sent,
-    -- so skip the forced follow-up rather than escalate blindly.
-    return
-  end
-
+  -- Hold only the pane id across the delay: a pane object that dies before
+  -- the timer fires aborts the timer's coroutine.
+  local pane_id = pane:pane_id()
   wezterm.time.call_after(0.5, function()
     local ok, err = pcall(function()
-      local ok_pane, live_pane = pcall(wezterm.mux.get_pane, pane_id)
-      if not ok_pane or not live_pane then
-        -- Pane closed during the delay: nothing to verify, do not force-kill.
-        return
-      end
-      local current = get_windows_kill_target(live_pane)
-      if same_windows_kill_target(target, current) then
-        background_windows_taskkill(target, true)
+      local live_pane = wezterm.mux.get_pane(pane_id)
+      if live_pane and same_kill_target(target, kill_target(live_pane)) then
+        taskkill(target, true)
       end
     end)
     if not ok then
-      log_warn_rate_limited('windows-taskkill-follow-up', 'Failed to run taskkill follow-up: ' .. tostring(err))
+      wezterm.log_warn('Failed to run taskkill follow-up: ' .. tostring(err))
     end
   end)
 end
 
---------------------------------------------------------------------------------
--- Pane destruction is explicit and confirmed. Avoid a second CLI process: it
--- can attach to a different GUI/class where pane ids may collide.
-local action_kill_pane = function(window, pane)
-  window:perform_action(wezterm.action.CloseCurrentPane { confirm = true }, pane)
-end
+--------------ALT-SCREEN PANE ACTIONS--------------
 
--- Resolve only an unambiguous target. Never paste or zoom an arbitrary first
--- alt-screen pane when several applications could receive the action.
-local function find_alt_screen_target_pane(tab, current_pane)
-  if not tab then
-    return nil, nil, 'missing'
-  end
-  local current_pane_id = get_pane_cache_id(current_pane)
+-- The pane an alt-screen action targets: the current pane when it runs an
+-- alt-screen app, otherwise the only alt-screen pane in the tab. Several
+-- candidates are refused; never paste into or zoom an arbitrary one.
+local function alt_screen_target(tab, current_pane)
+  local current_id = current_pane:pane_id()
   local candidates = {}
-  local ok, panes = pcall(function() return tab:panes_with_info() end)
-  if not ok or type(panes) ~= 'table' then
-    log_warn_rate_limited('alt-pane-list', 'Failed to enumerate panes: ' .. tostring(panes))
-    return nil, nil, 'unavailable'
-  end
-  for _, pane_info in ipairs(panes) do
-    local candidate = pane_info.pane
-    if pane_is_alt_screen(candidate) then
-      if get_pane_cache_id(candidate) == current_pane_id then
-        return candidate, pane_info
+  for _, entry in ipairs(try(tab, 'panes_with_info') or {}) do
+    if is_alt_screen(entry.pane) then
+      if entry.pane:pane_id() == current_id then
+        return entry
       end
-      candidates[#candidates + 1] = { pane = candidate, info = pane_info }
+      candidates[#candidates + 1] = entry
     end
   end
   if #candidates == 1 then
-    return candidates[1].pane, candidates[1].info
+    return candidates[1]
   end
-  return nil, nil, #candidates > 1 and 'ambiguous' or 'missing'
+  return nil, #candidates > 1 and 'ambiguous' or 'missing'
 end
 
---------------------------------------------------------------------------------
--- 'Ctrl + Alt + ;' toggles the zoom state of the pane running alt-screen.
-
-local action_alt_pane_toggle_zoom = function(window, pane)
-  local ok_tab, tab = pcall(function() return window:active_tab() end)
-  if not ok_tab or not tab then return end
-  local target_pane, pane_info, reason = find_alt_screen_target_pane(tab, pane)
-  if not target_pane or not pane_info then
+-- 'Ctrl + Alt + ;' toggles the zoom state of the alt-screen pane.
+local function action_alt_pane_toggle_zoom(window, pane)
+  local tab = window:active_tab()
+  local target, reason = alt_screen_target(tab, pane)
+  if not target then
     if reason == 'ambiguous' then
-      log_warn_rate_limited('alt-pane-zoom-ambiguous', 'Refusing to zoom: multiple alt-screen panes are eligible')
+      wezterm.log_warn('Refusing to zoom: multiple alt-screen panes are eligible')
     end
     return
   end
   local ok, err = pcall(function()
-    target_pane:activate()
-    tab:set_zoomed(not pane_info.is_zoomed)
+    target.pane:activate()
+    tab:set_zoomed(not target.is_zoomed)
   end)
   if not ok then
-    log_warn_rate_limited('alt-pane-zoom', 'Failed to toggle alt-pane zoom: ' .. tostring(err))
+    wezterm.log_warn('Failed to toggle alt-pane zoom: ' .. tostring(err))
   end
 end
 
---------------ESCAPE BEHAVIOR--------------
--- 'Esc' is context-sensitive: clear the current line when possible, but still
--- behave like a real terminal Escape for full-screen apps and overlays.
-
-local plain_escape = act.SendKey{ key='Escape' }
-local fzf_escape = act.SendKey{ key='g', mods='CTRL' }
--- ConPTY holds a bare \x1b as a possible escape-sequence prefix, so a
--- synthesized plain Escape never reaches console apps as VK_ESCAPE. Encode
--- the press as explicit win32-input-mode key events (CSI Vk;Sc;Uc;Kd;Cs;Rc _),
--- which ConPTY translates deterministically into VK_ESCAPE INPUT_RECORDs —
--- what Clink's popups actually listen for.
-local win32_escape = act.SendString '\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_'
-local clear_shell_line = act.SendString '\x01\x0b'
-local action_Esc = function(window, pane)
-  if window:leader_is_active() then
-    window:perform_action(plain_escape, pane)
-    return
-  end
-  local shell, at_prompt, integrated, user_vars = pane_prompt_context(pane)
-  if pane_fzf_active(pane, user_vars) then
-    -- Explicit signal from the shell's fzf wrapper; Ctrl-G is fzf's abort key
-    -- and works through native Windows, WSL, and MSYS terminal boundaries.
-    window:perform_action(fzf_escape, pane)
-  elseif pane_clink_popup_active(pane, user_vars) then
-    -- a Clink popup (e.g. Rex selector) owns the pane; an Escape key event
-    -- must reach it instead of the cmd line-clear sequence below
-    window:perform_action(win32_escape, pane)
-  elseif pane_is_alt_screen(pane) then
-    window:perform_action(plain_escape, pane)
-  elseif integrated and at_prompt and shell == 'cmd' then
-    window:perform_action(clear_cmd_line, pane)
-  elseif integrated and at_prompt then
-    window:perform_action(clear_shell_line, pane)
-  else
-    -- A console REPL owns its line editor but publishes nothing. Everything
-    -- else, remote panes included, is pass-through; never scrape the visible
-    -- line to decide what Escape means.
-    local repl = console_repl(pane)
-    window:perform_action(
-      repl == 'powershell' and clear_cmd_line or repl and clear_shell_line or plain_escape,
-      pane)
-  end
-end
-
--- Send selected text to the pane running alt-screen, e.g. terminal selection
--- into Neovim copy-mode or a full-screen TUI.
-local action_send_to_alt_pane = function(window, pane)
+-- Copy-mode 'Ctrl + Enter' sends the selection to the alt-screen pane, e.g.
+-- into Neovim or another full-screen TUI. send_paste keeps bracketed-paste
+-- protection.
+local function action_send_to_alt_pane(window, pane)
   local text = window:get_selection_text_for_pane(pane)
-  if not text or text == '' then return end
-  local ok_tab, tab = pcall(function() return window:active_tab() end)
-  if not ok_tab or not tab then return end
-  local target_pane, _pane_info, reason = find_alt_screen_target_pane(tab, pane)
-  if not target_pane then
+  if text == '' then return end
+  local target, reason = alt_screen_target(window:active_tab(), pane)
+  if not target then
     if reason == 'ambiguous' then
-      log_warn_rate_limited('alt-pane-paste-ambiguous', 'Refusing to paste: multiple alt-screen panes are eligible')
+      wezterm.log_warn('Refusing to paste: multiple alt-screen panes are eligible')
     end
     return
   end
-  local ok, err = pcall(function() target_pane:send_paste(text) end)
+  local ok, err = pcall(function()
+    target.pane:send_paste(text)
+    target.pane:activate()
+  end)
   if not ok then
-    log_warn_rate_limited('alt-pane-paste', 'Failed to send protected paste: ' .. tostring(err))
-    return
+    wezterm.log_warn('Failed to send protected paste: ' .. tostring(err))
   end
-  pcall(target_pane.activate, target_pane)
 end
 
---------------KEY TABLES AND BINDINGS--------------
+--------------KEY TABLE ICONS--------------
+-- The right status shows one icon per active key table, per window.
 
--- Key tables stack icons - clear, add, pop.
-local key_icons_by_window = {}
-local key_icons_last_seen = {}
-local function get_key_icons_stack(window)
-  if not window then
-    return {}
+local window_states = {}  -- window_id -> { icons = {...}, seen = clock() }
+
+local function window_state(window)
+  local id = window:window_id()
+  local state = window_states[id]
+  if not state then
+    state = { icons = {} }
+    window_states[id] = state
   end
-  local window_id = window:window_id()
-  key_icons_last_seen[window_id] = clock_seconds()
-  local stack = key_icons_by_window[window_id]
-  if not stack then
-    stack = {}
-    key_icons_by_window[window_id] = stack
-  end
-  return stack
-end
-
-local function clear_key_icons_stack(window)
-  local window_id = window:window_id()
-  key_icons_by_window[window_id] = {}
-  key_icons_last_seen[window_id] = clock_seconds()
-end
-
-local function pop_key_icons_stack(window)
-  table.remove(get_key_icons_stack(window))
+  state.seen = clock()
+  return state
 end
 
 local function push_key_icon(icon)
   return function(window)
-    local stack = get_key_icons_stack(window)
-    stack[#stack + 1] = icon
+    local icons = window_state(window).icons
+    icons[#icons + 1] = icon
   end
 end
 
-local add_term_key_icon = push_key_icon(wezterm.nerdfonts.cod_terminal)
-local add_nvim_key_icon = push_key_icon(wezterm.nerdfonts.custom_neovim)
+local function pop_key_icon(window)
+  table.remove(window_state(window).icons)
+end
+
+local function clear_key_icons(window)
+  window_state(window).icons = {}
+end
+
+--------------KEY TABLES AND BINDINGS--------------
+
 config.keys = {
   { key = 'F1', mods = 'NONE', action = act.ShowDebugOverlay },
   { key = 'F2', mods = 'NONE', action = act.ShowLauncher },
   { key = 'F3', mods = 'NONE', action = act.ShowTabNavigator },
   { key = 'F4', mods = 'NONE', action = act.ActivateCommandPalette },
-  { key = 'F5', mods = 'NONE', action = act.CharSelect{ group = 'SmileysAndEmotion' } },
-  { key = 'F6', mods = 'NONE', action = act.CharSelect{ group = 'Objects' } },
-  { key = 'F7', mods = 'NONE', action = act.CharSelect{ group = 'Symbols' } },
-  { key = 'F8', mods = 'NONE', action = act.CharSelect{ group = 'UnicodeNames' } },
+  { key = 'F5', mods = 'NONE', action = act.CharSelect { group = 'SmileysAndEmotion' } },
+  { key = 'F6', mods = 'NONE', action = act.CharSelect { group = 'Objects' } },
+  { key = 'F7', mods = 'NONE', action = act.CharSelect { group = 'Symbols' } },
+  { key = 'F8', mods = 'NONE', action = act.CharSelect { group = 'UnicodeNames' } },
   { key = 'd', mods = 'CTRL', action = cb(action_exit_shell) },
   { key = 'k', mods = 'LEADER', action = cb(action_kill_process) },
-  { key = 'x', mods = 'LEADER', action = cb(action_kill_pane) },
+  -- Pane destruction is explicit and confirmed; never a second CLI process.
+  { key = 'x', mods = 'LEADER', action = act.CloseCurrentPane { confirm = true } },
   { key = 'l', mods = 'LEADER', action = cb(action_log_debug_info) },
   { key = 'Home', mods = 'CTRL', action = cb(action_ctrl_home) },
   { key = 'End', mods = 'CTRL', action = cb(action_ctrl_end) },
   { key = 'PageUp', mods = 'NONE', action = cb(action_pageup) },
   { key = 'PageDown', mods = 'NONE', action = cb(action_pagedown) },
-  { key = 'Escape', mods = 'NONE', action = cb(action_Esc) },
-  { key = 'l', mods = 'CTRL', action = cb(action_clear_screen) },
+  { key = 'Escape', mods = 'NONE', action = cb(action_escape) },
+  -- Always the Ctrl-L key; never a textual `clear` into a possibly non-empty line.
+  { key = 'l', mods = 'CTRL', action = send_key('l', 'CTRL') },
   { key = 't', mods = 'CTRL|ALT', action = act.SpawnTab 'DefaultDomain' },
   { key = 'y', mods = 'CTRL|ALT', action = act.SpawnTab 'CurrentPaneDomain' },
   { key = 'Tab', mods = 'CTRL|SHIFT', action = act.ActivateTabRelative(-1) },
@@ -821,23 +631,15 @@ config.keys = {
   { key = '\'', mods = 'CTRL|ALT', action = act.TogglePaneZoomState },
   { key = ';', mods = 'CTRL|ALT', action = cb(action_alt_pane_toggle_zoom) },
 
-  -- Key mappings for KeyTable stack and actions.
-  {
-    key = '0',
-    mods = 'CTRL|ALT',
-    action = act.Multiple { act.ClearKeyTableStack, cb(clear_key_icons_stack) },
-  },
-  {
-    key = '-',
-    mods = 'CTRL|ALT',
-    action = act.Multiple { act.PopKeyTable, cb(pop_key_icons_stack) },
-  },
+  -- Key table stack: clear, pop, push term, push nvim.
+  { key = '0', mods = 'CTRL|ALT', action = act.Multiple { act.ClearKeyTableStack, cb(clear_key_icons) } },
+  { key = '-', mods = 'CTRL|ALT', action = act.Multiple { act.PopKeyTable, cb(pop_key_icon) } },
   {
     key = '9',
     mods = 'CTRL|ALT',
     action = act.Multiple {
       act.ActivateKeyTable { name = 'term', one_shot = false },
-      cb(add_term_key_icon),
+      cb(push_key_icon(nf.cod_terminal)),
     },
   },
   {
@@ -845,14 +647,14 @@ config.keys = {
     mods = 'CTRL|ALT',
     action = act.Multiple {
       act.ActivateKeyTable { name = 'nvim', one_shot = false },
-      cb(add_nvim_key_icon),
+      cb(push_key_icon(nf.custom_neovim)),
     },
   },
 }
 
--- Send clean F keys to shell, e.g. for Midnight Commander.
+-- Send clean F keys to the shell, e.g. for Midnight Commander.
 for f = 1, 12 do
-  local key = 'F' .. tostring(f)
+  local key = 'F' .. f
   table.insert(config.keys, { key = key, mods = 'CTRL|ALT', action = send_key(key) })
 end
 
@@ -890,571 +692,343 @@ config.key_tables = {
 
 if wezterm.target_triple:match('darwin') then
   -- Mac: make sure Ctrl+1..9 pass through to the shell as character keys.
-  for k = 1,9 do
-    table.insert(config.keys, {
-      key = tostring(k),
-      mods = 'CTRL',
-      action = send_key(tostring(k), 'CTRL'),
-    })
+  for k = 1, 9 do
+    table.insert(config.keys, { key = tostring(k), mods = 'CTRL', action = send_key(tostring(k), 'CTRL') })
   end
-
-  -- Cursor Home/End plus half-page Up/Down. Send logical keys so WezTerm uses
-  -- the active terminal keyboard protocol rather than hard-coded SS3 bytes.
+  -- Cursor Home/End plus half-page Up/Down. Logical keys let WezTerm use the
+  -- active keyboard protocol instead of hard-coded SS3 bytes.
   table.insert(config.keys, { key = 'LeftArrow',  mods = 'SUPER', action = send_key('Home') })
   table.insert(config.keys, { key = 'DownArrow',  mods = 'SUPER', action = act.ScrollByPage(0.5) })
   table.insert(config.keys, { key = 'UpArrow',    mods = 'SUPER', action = act.ScrollByPage(-0.5) })
   table.insert(config.keys, { key = 'RightArrow', mods = 'SUPER', action = send_key('End') })
 end
 
--- Apply local key binds last so machine-specific overrides can win.
+-- Local key binds go last so machine-specific overrides win.
 if local_config.keys ~= nil and type(local_config.keys) ~= 'table' then
   wezterm.log_warn('wezterm_local.keys must be a table; ignoring local key bindings')
-elseif local_config.keys then
-  for _, v in ipairs(local_config.keys) do
-    table.insert(config.keys, v)
+else
+  for _, binding in ipairs(local_config.keys or {}) do
+    table.insert(config.keys, binding)
   end
 end
 
--- Send selected text to the active alt-screen pane, e.g. terminal selection to
--- Neovim or another full-screen TUI.
 if wezterm.gui then
   local copy_mode = wezterm.gui.default_key_tables().copy_mode
   table.insert(copy_mode, { key = 'Enter', mods = 'CTRL', action = cb(action_send_to_alt_pane) })
-  config.key_tables['copy_mode'] = copy_mode
+  config.key_tables.copy_mode = copy_mode
 end
 
 -- Ctrl+wheel scrolls line-by-line for precise viewport movement.
 config.mouse_bindings = {
-  {
-    event = { Down = { streak = 1, button = { WheelUp = 1 } } },
-    mods = 'CTRL',
-    action = act.ScrollByLine(-1),
-  },
-  {
-    event = { Down = { streak = 1, button = { WheelDown = 1 } } },
-    mods = 'CTRL',
-    action = act.ScrollByLine(1),
-  },
+  { event = { Down = { streak = 1, button = { WheelUp = 1 } } },   mods = 'CTRL', action = act.ScrollByLine(-1) },
+  { event = { Down = { streak = 1, button = { WheelDown = 1 } } }, mods = 'CTRL', action = act.ScrollByLine(1) },
 }
 
---------------STATUS AND TAB TITLES--------------
--- Top left & right status bar.
+--------------PER-PANE MEMORY--------------
+-- Everything the status bar and tab titles remember about a pane, keyed by
+-- pane id and expired by inactivity. Fields:
+--   seen     last clock() the pane was painted
+--   vars     user vars as of the last state_serial commit
+--   cwd      display path read after the last cwd_ready
+--   command  { token, started } of the running command, for the elapsed timer
+--   settle   { shown, pending, since } anti-flicker state of the tab title
+--   title    { name, pane_title, text } last formatted tab title
 
-local format_left_status = function(window, pane)
-  return wezterm.format({
-    { Foreground = { Color = window:leader_is_active() and '#FF6060' or '#000000' } },
-    { Text = wezterm.nerdfonts.md_lightning_bolt },
-  })
+local pane_states = {}
+
+local function pane_state(pane_id)
+  local state = pane_states[pane_id]
+  if not state then
+    state = {}
+    pane_states[pane_id] = state
+  end
+  state.seen = clock()
+  return state
 end
 
-local tab_title_cache = {}
-local tab_title_settle = {}
-local display_cwd_cache = {}
-local command_runtime_state = {}
-local committed_user_vars_cache = {}
-local pane_last_seen = {}
-local refresh_window_status
+local cache_prune_interval_seconds = 300
+local cache_retention_seconds = 3600
+local last_prune = clock()
 
-local function safe_method(object, method, fallback, expected_type)
-  if not object then
-    return fallback
+-- Live tabs are touched by status and title painting, so no mux sweep is
+-- needed; whatever went untouched for an hour is gone.
+local function prune_stale_states()
+  local now = clock()
+  if now - last_prune < cache_prune_interval_seconds then
+    return
   end
-  local ok_field, fn = pcall(function() return object[method] end)
-  if not ok_field or type(fn) ~= 'function' then
-    return fallback
-  end
-  local ok, value = pcall(fn, object)
-  if ok and (not expected_type or type(value) == expected_type) then
-    return value
-  end
-  return fallback
-end
-
-local function get_pane_user_vars(pane)
-  local pane_id = get_pane_cache_id(pane)
-  if pane_id ~= nil and committed_user_vars_cache[pane_id] then
-    return committed_user_vars_cache[pane_id]
-  end
-  -- Bootstrap after a config reload. Subsequent shell transitions are copied
-  -- only on state_serial, so automatic per-variable update-status events keep
-  -- rendering the previous coherent state rather than intermediate fields.
-  local user_vars = {}
-  for name, value in pairs(read_pane_user_vars(pane)) do
-    user_vars[name] = value
-  end
-  if pane_id ~= nil and type(user_vars.state_serial) == 'string' and user_vars.state_serial ~= '' then
-    committed_user_vars_cache[pane_id] = user_vars
-  end
-  return user_vars
-end
-
-local function normalize_cwd_value(cwd)
-  if not cwd then
-    return ''
-  end
-  if type(cwd) == 'string' then
-    return normalize_path(cwd)
-  end
-  local ok_path, file_path = pcall(function() return cwd.file_path end)
-  if ok_path and type(file_path) == 'string' then
-    return normalize_path(file_path)
-  end
-  return normalize_path(tostring(cwd))
-end
-
--- Only call this after an integration has emitted OSC 7 and then cwd_ready.
--- That ordering guarantees an in-memory terminal URI and prevents WezTerm's
--- get_current_working_dir fallback from scanning operating-system processes.
-local function refresh_display_cwd(pane)
-  local pane_id = get_pane_cache_id(pane)
-  if pane_id == nil then
-    return ''
-  end
-  pane_last_seen[pane_id] = clock_seconds()
-  local ok_field, getter = pcall(function() return pane.get_current_working_dir end)
-  if not ok_field or type(getter) ~= 'function' then
-    local value = display_cwd_cache[pane_id] and display_cwd_cache[pane_id].value or ''
-    display_cwd_cache[pane_id] = { value = value, last_seen = clock_seconds() }
-    return value
-  end
-  local ok, cwd = pcall(getter, pane)
-  if not ok then
-    if not is_stale_mux_object_error(cwd) then
-      log_warn_rate_limited('cwd', 'Failed to read OSC-reported cwd: ' .. tostring(cwd))
+  last_prune = now
+  for id, state in pairs(pane_states) do
+    if now - state.seen >= cache_retention_seconds then
+      pane_states[id] = nil
     end
-    local value = display_cwd_cache[pane_id] and display_cwd_cache[pane_id].value or ''
-    display_cwd_cache[pane_id] = { value = value, last_seen = clock_seconds() }
-    return value
   end
-  local value = normalize_cwd_value(cwd)
-  -- Cache even an empty terminal URI. The next cwd_ready event retries, while
-  -- ordinary status paints remain strictly memory-only.
-  display_cwd_cache[pane_id] = { value = value, last_seen = clock_seconds() }
-  return value
+  for id, state in pairs(window_states) do
+    if now - state.seen >= cache_retention_seconds then
+      window_states[id] = nil
+    end
+  end
 end
 
-local function get_display_cwd(pane, user_vars)
-  local pane_id = get_pane_cache_id(pane)
-  if pane_id == nil then
-    return ''
+-- Producers write several user vars per transition and emit state_serial
+-- last. Each var triggers update-status, so painting is skipped while these
+-- fields differ from the committed snapshot; the commit repaints once.
+local committed_fields = {
+  'shell_integration', 'shell_name', 'shell_prompt', 'process_name',
+  'command_token', 'clink', 'zsh', 'nvim', 'cwd_ready', 'state_serial',
+}
+
+local function batch_in_progress(state, live)
+  if not state.vars then
+    -- Nothing committed since config load: an integrated shell that has not
+    -- reached its state_serial yet is mid-batch; anything else is settled.
+    return live.shell_integration == 'on' and (live.state_serial or '') == ''
   end
-  local cached = display_cwd_cache[pane_id]
-  if not cached and type(user_vars.cwd_ready) == 'string' and user_vars.cwd_ready ~= '' then
-    return refresh_display_cwd(pane)
+  for _, name in ipairs(committed_fields) do
+    if live[name] ~= state.vars[name] then
+      return true
+    end
   end
-  if cached then
-    cached.last_seen = clock_seconds()
-    return cached.value
-  end
-  return ''
+  return false
 end
 
-local function append_format_item(items, color, text)
-  if text == nil then
+-- Read the CWD from the terminal's OSC 7 state. Only called right after a
+-- producer signals cwd_ready: without an in-memory URI WezTerm would fall
+-- back to scanning operating-system processes.
+local function refresh_cwd(pane, state)
+  local ok, cwd = pcall(pane.get_current_working_dir, pane)
+  if not ok then
+    state.cwd = state.cwd or ''
     return
   end
-  text = tostring(text)
-  if text == '' then
-    return
+  if cwd ~= nil and type(cwd) ~= 'string' then
+    cwd = cwd.file_path or tostring(cwd)  -- Url object; older builds return a string
   end
-  if type(color) == 'string' and color ~= '' then
-    table.insert(items, { Foreground = { Color = color } })
+  state.cwd = cwd and normalize_path(cwd) or ''
+end
+
+local function display_cwd(pane, state, vars)
+  if state.cwd == nil and (vars.cwd_ready or '') ~= '' then
+    refresh_cwd(pane, state)
   end
-  table.insert(items, { Text = text })
+  return state.cwd or ''
+end
+
+-- Seconds since a new command_token was first seen; nil at the prompt.
+local function command_elapsed(state, vars)
+  local token = vars.command_token or ''
+  if token == '' or vars.shell_prompt == 'on' then
+    state.command = nil
+    return nil
+  end
+  local now = clock()
+  if not state.command or state.command.token ~= token then
+    state.command = { token = token, started = now }
+  end
+  return now - state.command.started
+end
+
+local function format_elapsed(seconds)
+  seconds = math.max(0, math.floor(seconds))
+  local days = math.floor(seconds / 86400)
+  return (days > 0 and days .. 'd' or '')
+    .. string.format('%02d:%02d:%02d', math.floor(seconds / 3600) % 24, math.floor(seconds / 60) % 60, seconds % 60)
+end
+
+--------------STATUS BAR--------------
+
+local function format_left_status(window)
+  return wezterm.format {
+    { Foreground = { Color = window:leader_is_active() and '#FF6060' or '#000000' } },
+    { Text = nf.md_lightning_bolt },
+  }
 end
 
 local function toggle_color(status)
   return status == 'on' and '#AF8461' or status == 'off' and '#6A946A' or '#666666'
 end
 
-local function format_elapsed_time(elapsed_seconds)
-  if elapsed_seconds == nil then
-    return ''
-  end
-  elapsed_seconds = math.max(0, math.floor(elapsed_seconds))
-  local days = math.floor(elapsed_seconds / 86400)
-  local hours = math.floor(elapsed_seconds / 3600) % 24
-  local minutes = math.floor(elapsed_seconds / 60) % 60
-  local seconds = elapsed_seconds % 60
-  return (days > 0 and days..'d' or '') .. string.format('%02d:%02d:%02d', hours, minutes, seconds)
-end
-
-local function normalize_process_label(label)
-  if type(label) ~= 'string' then
-    return nil
-  end
-  label = label:match('^%s*(.-)%s*$') or ''
-  if label == '' then
-    return nil
-  end
-  label = get_basename(label) or label
-  label = label:lower():gsub('%.exe$', '')
-  return label ~= '' and label or nil
-end
-
-local function get_display_process_name(user_vars, pane_title)
-  if user_vars.nvim == 'on' then
-    return 'nvim'
-  end
-  return normalize_process_label(user_vars.process_name)
-    or normalize_process_label(user_vars.shell_name)
-    or normalize_process_label(pane_title)
-end
-
-local function get_command_elapsed(pane_id, user_vars)
-  local token = type(user_vars.command_token) == 'string' and user_vars.command_token or ''
-  if token == '' or user_vars.shell_prompt == 'on' then
-    command_runtime_state[pane_id] = nil
-    return nil
-  end
-  local now = clock_seconds()
-  local state = command_runtime_state[pane_id]
-  if not state or state.token ~= token then
-    state = { token = token, started = now, last_seen = now }
-    command_runtime_state[pane_id] = state
-  else
-    state.last_seen = now
-  end
-  return now - state.started
-end
-
-local function format_right_status(window, pane)
-  local user_vars = get_pane_user_vars(pane)
-  local pane_id = get_pane_cache_id(pane)
-  local cwd = get_display_cwd(pane, user_vars)
-  local key_icons = get_key_icons_stack(window)
-  local elapsed = pane_id and get_command_elapsed(pane_id, user_vars) or nil
-  local running_time = format_elapsed_time(elapsed)
-  if pane_id then
-    pane_last_seen[pane_id] = clock_seconds()
-  end
-
+local function format_right_status(window, pane, state, vars)
   local items = {}
-  append_format_item(items, 'Yellow', table.concat(key_icons, ' '))
-  append_format_item(items, '#4488FF', (#key_icons > 0) and ' '..wezterm.nerdfonts.md_arrow_expand_left..'    ' or '')
-  append_format_item(items, '#BBBBBB', cwd ~= '' and (wezterm.truncate_left(cwd, 60)..'      ') or '')
-  append_format_item(
-    items,
-    '#847EAE',
-    safe_method(window, 'active_workspace', '', 'string')..' : '..safe_method(pane, 'get_domain_name', '', 'string')..'    '
-  )
-  append_format_item(items, toggle_color(user_vars.clink), wezterm.nerdfonts.md_alpha_c..' ')
-  append_format_item(items, toggle_color(user_vars.zsh), wezterm.nerdfonts.md_alpha_z..' ')
-  append_format_item(items, toggle_color(user_vars.nvim), wezterm.nerdfonts.custom_neovim..'    ')
-  append_format_item(items, '#AB696F', running_time ~= '' and (running_time..'    ') or '')
+  local function add(color, text)
+    if text ~= '' then
+      items[#items + 1] = { Foreground = { Color = color } }
+      items[#items + 1] = { Text = text }
+    end
+  end
+  local icons = window_state(window).icons
+  local cwd = display_cwd(pane, state, vars)
+  local elapsed = command_elapsed(state, vars)
+  add('Yellow', table.concat(icons, ' '))
+  add('#4488FF', #icons > 0 and ' ' .. nf.md_arrow_expand_left .. '    ' or '')
+  add('#BBBBBB', cwd ~= '' and wezterm.truncate_left(cwd, 60) .. '      ' or '')
+  add('#847EAE', window:active_workspace() .. ' : ' .. (try(pane, 'get_domain_name') or '') .. '    ')
+  add(toggle_color(vars.clink), nf.md_alpha_c .. ' ')
+  add(toggle_color(vars.zsh), nf.md_alpha_z .. ' ')
+  add(toggle_color(vars.nvim), nf.custom_neovim .. '    ')
+  add('#AB696F', elapsed and format_elapsed(elapsed) .. '    ' or '')
   return wezterm.format(items)
 end
 
-local function set_status(window, setter, text, log_key)
-  if not window then
-    return
-  end
-  local ok_field, fn = pcall(function() return window[setter] end)
-  if not ok_field or type(fn) ~= 'function' then
-    return
-  end
-  local ok, err = pcall(fn, window, text)
-  if not ok then
-    log_warn_rate_limited(log_key, 'Failed to set ' .. setter .. ': ' .. tostring(err))
-  end
+local function refresh_status(window, pane, state, vars)
+  window:set_left_status(format_left_status(window))
+  window:set_right_status(format_right_status(window, pane, state, vars))
 end
 
-refresh_window_status = function(window, pane)
-  if not window then
+-- Paint from the committed snapshot; skip while a producer batch is open.
+-- Before the first commit (e.g. after a config reload) the live vars are the
+-- snapshot.
+local function paint_status(window, pane)
+  local state = pane_state(pane:pane_id())
+  local live = try(pane, 'get_user_vars') or {}
+  if batch_in_progress(state, live) then
     return
   end
-
-  local ok_left, left_status = pcall(format_left_status, window, pane)
-  if ok_left then
-    set_status(window, 'set_left_status', left_status, 'left-status-set')
-  else
-    log_warn_rate_limited('left-status', 'Failed to format left status: ' .. tostring(left_status))
+  if not state.vars and (live.state_serial or '') ~= '' then
+    state.vars = live
   end
-
-  local ok_right, right_status = pcall(format_right_status, window, pane)
-  if ok_right then
-    set_status(window, 'set_right_status', right_status, 'right-status-set')
-  else
-    log_warn_rate_limited('right-status', 'Failed to format right status: ' .. tostring(right_status))
-  end
+  refresh_status(window, pane, state, state.vars or live)
 end
 
 wezterm.on('user-var-changed', function(window, pane, name, value)
-  local pane_id = get_pane_cache_id(pane)
+  local state = pane_state(pane:pane_id())
   if name == 'cwd_ready' and value ~= '' then
-    refresh_display_cwd(pane)
-    return
+    refresh_cwd(pane, state)
+  elseif name == 'state_serial' then
+    state.vars = try(pane, 'get_user_vars') or state.vars
+    refresh_status(window, pane, state, state.vars or {})
   end
-  -- Shell/app producers emit state_serial last. Explicitly repaint only on
-  -- that commit; automatic intermediate update-status events render the last
-  -- committed snapshot rather than a partially updated state.
-  if name ~= 'state_serial' then
-    return
-  end
-  if pane_id ~= nil then
-    local snapshot = {}
-    for var_name, var_value in pairs(read_pane_user_vars(pane)) do
-      snapshot[var_name] = var_value
-    end
-    committed_user_vars_cache[pane_id] = snapshot
-    local cached = tab_title_cache[pane_id]
-    if cached then
-      cached.last_update = -math.huge
-    end
-  end
-  refresh_window_status(window, pane)
 end)
 
-wezterm.on('window-focus-changed', function(window, pane)
-  refresh_window_status(window, pane)
-end)
-
--- Expire state incrementally by inactivity. Active/inactive live tabs are
--- touched by status/title formatting, so no synchronous mux.get_pane sweep is
--- needed on the GUI event thread.
-local cache_prune_interval_seconds = 300
-local cache_retention_seconds = 3600
-local last_cache_prune = clock_seconds()
-
-local function prune_inactive_cache_entries(now)
-  for pane_id, last_seen in pairs(pane_last_seen) do
-    if now - last_seen >= cache_retention_seconds then
-      pane_last_seen[pane_id] = nil
-      display_cwd_cache[pane_id] = nil
-      tab_title_cache[pane_id] = nil
-      tab_title_settle[pane_id] = nil
-      command_runtime_state[pane_id] = nil
-      committed_user_vars_cache[pane_id] = nil
-    end
-  end
-  for window_id, last_seen in pairs(key_icons_last_seen) do
-    if now - last_seen >= cache_retention_seconds then
-      key_icons_last_seen[window_id] = nil
-      key_icons_by_window[window_id] = nil
-    end
-  end
-end
-
-local committed_fields = {
-  'shell_integration', 'shell_name', 'shell_prompt', 'process_name',
-  'command_token', 'clink', 'zsh', 'nvim', 'cwd_ready', 'state_serial',
-}
-
-local function pane_state_is_committed(pane)
-  local pane_id = get_pane_cache_id(pane)
-  local committed = pane_id ~= nil and committed_user_vars_cache[pane_id] or nil
-  if not committed then
-    local live = read_pane_user_vars(pane)
-    if live.shell_integration == 'on'
-        and (type(live.state_serial) ~= 'string' or live.state_serial == '') then
-      return false
-    end
-    return true
-  end
-  local live = read_pane_user_vars(pane)
-  for _, name in ipairs(committed_fields) do
-    if live[name] ~= committed[name] then
-      return false
-    end
-  end
-  return true
-end
+wezterm.on('window-focus-changed', paint_status)
 
 wezterm.on('update-status', function(window, pane)
-  -- Each OSC user variable causes update-status. Skip formatting while a
-  -- producer's batch differs from the last state_serial snapshot; the final
-  -- commit callback performs one immediate coherent repaint.
-  if pane_state_is_committed(pane) then
-    refresh_window_status(window, pane)
-  end
-  local now = clock_seconds()
-  if now - last_cache_prune >= cache_prune_interval_seconds then
-    last_cache_prune = now
-    prune_inactive_cache_entries(now)
-  end
+  paint_status(window, pane)
+  prune_stale_states()
 end)
 
-local function get_pane_title_text(pane)
-  local ok, title = pcall(function() return pane.title end)
-  return ok and type(title) == 'string' and title or ''
-end
--- Format tab title.
--- Tab titles consume PaneInformation snapshot fields and OSC user vars only;
--- they never resolve a mux pane or query the operating system.
+--------------TAB TITLES--------------
+-- Tab titles use the PaneInformation snapshot and user vars only; they never
+-- resolve a mux pane or query the operating system.
 
-local icons_names = {
-  nvim       = { wezterm.nerdfonts.custom_neovim,    'Neovim' },
-  bash       = { wezterm.nerdfonts.md_bash,          'bash' },
-  gitbash    = { wezterm.nerdfonts.dev_git,          'git bash' },
-  powershell = { wezterm.nerdfonts.seti_powershell,  'PS5' },
-  pwsh       = { wezterm.nerdfonts.seti_powershell,  'PS7' },
-  python     = { wezterm.nerdfonts.seti_python,      'Python' },
-  python3    = { wezterm.nerdfonts.seti_python,      'Python' },
-  ptpython   = { wezterm.nerdfonts.seti_python,      'PtPy' },
-  cmd        = { wezterm.nerdfonts.cod_terminal,     'Cmd' },
-  julia      = { wezterm.nerdfonts.seti_julia,       'Julia' },
-  wslhost    = { wezterm.nerdfonts.linux_tux,        'WSL' },
-  nu         = { wezterm.nerdfonts.md_chevron_right, 'Nu' },
-  zsh        = { wezterm.nerdfonts.md_percent,       'zsh' },
+local process_icons = {
+  nvim       = { nf.custom_neovim,    'Neovim' },
+  bash       = { nf.md_bash,          'bash' },
+  gitbash    = { nf.dev_git,          'git bash' },
+  powershell = { nf.seti_powershell,  'PS5' },
+  pwsh       = { nf.seti_powershell,  'PS7' },
+  python     = { nf.seti_python,      'Python' },
+  python3    = { nf.seti_python,      'Python' },
+  ptpython   = { nf.seti_python,      'PtPy' },
+  cmd        = { nf.cod_terminal,     'Cmd' },
+  julia      = { nf.seti_julia,       'Julia' },
+  wslhost    = { nf.linux_tux,        'WSL' },
+  nu         = { nf.md_chevron_right, 'Nu' },
+  zsh        = { nf.md_percent,       'zsh' },
 }
 
--- Tab-title flicker guard: a foreground process name must persist for
--- tab_title_settle_seconds before it replaces the name shown on the tab, so a
--- short-lived command (git, ls, a sub-second build step) never flips the title.
--- Re-evaluated on each redraw and self-correcting: no timers, no callbacks.
+local function process_label(label)
+  if type(label) ~= 'string' then return nil end
+  label = label:match('^%s*(.-)%s*$')
+  label = (basename(label) or label):lower():gsub('%.exe$', '')
+  return label ~= '' and label or nil
+end
+
+local function display_process_name(vars, pane_title)
+  if vars.nvim == 'on' then
+    return 'nvim'
+  end
+  return process_label(vars.process_name) or process_label(vars.shell_name) or process_label(pane_title)
+end
+
+-- Flicker guard: a new name must persist for a second before it replaces the
+-- shown one, so a short-lived command (git, ls, a build step) never flips the
+-- title. Re-evaluated on every redraw; no timers.
 local tab_title_settle_seconds = 1.0
 
-local function settle_tab_title_name(pane_id, name)
-  local state = tab_title_settle[pane_id]
-  if not state then
-    tab_title_settle[pane_id] = { shown = name, last_seen = clock_seconds() }
+local function settled_name(state, name)
+  local settle = state.settle
+  if not settle then
+    state.settle = { shown = name }
     return name
   end
-  state.last_seen = clock_seconds()
-  if name == state.shown then
-    state.pending = nil
-    return state.shown
+  if name == settle.shown then
+    settle.pending = nil
+  elseif name ~= settle.pending then
+    settle.pending, settle.since = name, clock()
+  elseif clock() - settle.since >= tab_title_settle_seconds then
+    settle.shown, settle.pending = name, nil
   end
-  if name ~= state.pending then
-    state.pending = name
-    state.pending_since = clock_seconds()
-  elseif clock_seconds() - (state.pending_since or 0) >= tab_title_settle_seconds then
-    state.shown = name
-    state.pending = nil
-    return name
-  end
-  return state.shown
+  return settle.shown
 end
 
--- A short reuse window avoids redundant string formatting across the two
--- format-tab-title passes while retaining the one-second anti-flicker settle.
-local tab_title_reuse_seconds = 0.5
-
-local function get_pane_info_user_vars(pane)
-  local ok, user_vars = pcall(function() return pane.user_vars end)
-  return ok and type(user_vars) == 'table' and user_vars or {}
+local function tab_title_text(tab, max_width)
+  local width = math.max(1, max_width or 1)
+  if tab.tab_title ~= '' then
+    return wezterm.truncate_right(tab.tab_title, width)
+  end
+  local info = tab.active_pane
+  local state = pane_state(info.pane_id)
+  local vars = state.vars or info.user_vars
+  local name = settled_name(state, display_process_name(vars, info.title) or 'terminal')
+  local title = state.title
+  if not title or title.name ~= name or title.pane_title ~= info.title then
+    local prefix = info.title:match('^Copy mode:') and 'Copy mode: ' or ''
+    local icon = process_icons[name] or { '>', name }
+    title = { name = name, pane_title = info.title, text = prefix .. icon[1] .. ' ' .. icon[2] .. ' : ' .. info.pane_id }
+    state.title = title
+  end
+  return wezterm.truncate_right(title.text, width)
 end
 
-local function get_tab_title_text(tab, max_width)
-  local explicit_title = type(tab.tab_title) == 'string' and tab.tab_title or ''
-  if explicit_title ~= '' then
-    return wezterm.truncate_right(explicit_title, math.max(1, max_width or 1))
+wezterm.on('format-tab-title', function(tab, _tabs, _panes, _config, _hover, max_width)
+  local ok, text = pcall(tab_title_text, tab, max_width)
+  if ok then
+    return text
   end
-  local pane = tab.active_pane
-  local pane_id = get_pane_cache_id(pane)
-  if not pane_id then
-    return nil
-  end
-  local pane_title = type(pane.title) == 'string' and pane.title or get_pane_title_text(pane)
-  local user_vars = committed_user_vars_cache[pane_id] or get_pane_info_user_vars(pane)
-  local cached = tab_title_cache[pane_id]
-  local now = clock_seconds()
-  pane_last_seen[pane_id] = now
-  if cached and cached.pane_title == pane_title
-      and cached.process_name == user_vars.process_name
-      and cached.shell_name == user_vars.shell_name
-      and cached.nvim == user_vars.nvim
-      and now - (cached.last_update or 0) < tab_title_reuse_seconds then
-    return wezterm.truncate_right(cached.text, math.max(1, max_width or 1))
-  end
-  local name = get_display_process_name(user_vars, pane_title)
-  if not name or name == '' then
-    name = 'terminal'
-  end
-  name = settle_tab_title_name(pane_id, name)
-  if cached and cached.name == name and cached.pane_title == pane_title then
-    cached.process_name = user_vars.process_name
-    cached.shell_name = user_vars.shell_name
-    cached.nvim = user_vars.nvim
-    cached.last_update = now
-    return wezterm.truncate_right(cached.text, math.max(1, max_width or 1))
-  end
-  local title_prefix = pane_title:match('^Copy mode:') and 'Copy mode: ' or ''
-  local icon_name = icons_names[name] or { '>', name }
-  local text = title_prefix .. icon_name[1] .. ' ' .. icon_name[2] .. ' : ' .. pane_id
-  tab_title_cache[pane_id] = {
-    name = name,
-    pane_title = pane_title,
-    process_name = user_vars.process_name,
-    shell_name = user_vars.shell_name,
-    nvim = user_vars.nvim,
-    text = text,
-    last_update = now,
-  }
-  return wezterm.truncate_right(text, math.max(1, max_width or 1))
-end
-
-wezterm.on('format-tab-title', function(tab, tabs, panes, config, hover, max_width)
-  local ok, result = pcall(get_tab_title_text, tab, max_width)
-  if not ok then
-    log_warn_rate_limited('tab-title', 'Failed to format tab title: ' .. tostring(result))
-    result = nil
-  end
-  if result ~= nil then
-    return result
-  end
-  -- Error or transient empty name: hold the last good title instead of
-  -- dropping to WezTerm's default for a tick.
-  local pane_id = get_pane_cache_id(tab.active_pane)
-  local cached = pane_id and tab_title_cache[pane_id] or nil
-  return cached and wezterm.truncate_right(cached.text, math.max(1, max_width or 1)) or nil
+  warn_rate_limited('tab-title', 'Failed to format tab title: ' .. tostring(text))
+  -- Hold the last good title instead of dropping to the default for a tick.
+  local state = tab.active_pane and pane_states[tab.active_pane.pane_id]
+  return state and state.title and wezterm.truncate_right(state.title.text, math.max(1, max_width or 1)) or nil
 end)
 
-local function refresh_spawned_window_status(mux_window, pane, delay_seconds)
-  if not mux_window or not pane then
-    return
-  end
-  -- Capture only plain ids across the delay. Userdata held over a timer can
-  -- outlive its window/pane, and method calls on the dead object abort the
-  -- timer's coroutine outside any pcall ("cannot resume dead coroutine").
-  local ok_id, window_id = pcall(function() return mux_window:window_id() end)
-  local pane_id = get_pane_cache_id(pane)
-  if not ok_id or type(window_id) ~= 'number' or type(pane_id) ~= 'number' then
-    return
-  end
-  wezterm.time.call_after(delay_seconds, function()
-    local ok, err = pcall(function()
-      local ok_win, live_window = pcall(wezterm.mux.get_window, window_id)
-      local ok_pane, live_pane = pcall(wezterm.mux.get_pane, pane_id)
-      if not ok_win or not live_window or not ok_pane or not live_pane then
-        -- Window or pane closed during the delay: nothing left to refresh.
-        return
-      end
-      local ok_gui, gui_window = pcall(live_window.gui_window, live_window)
-      if ok_gui and gui_window and refresh_window_status then
-        refresh_window_status(gui_window, live_pane)
-      end
-    end)
-    if not ok then
-      log_warn_rate_limited(
-        'startup-status-refresh',
-        'Failed to refresh startup status: ' .. tostring(err)
-      )
-    end
-  end)
-end
-
--- Startup window position is loaded from local configuration unless WezTerm
--- already supplied explicit startup args.
+--------------STARTUP--------------
+-- Position the first window from local configuration unless WezTerm already
+-- got explicit startup args.
 
 wezterm.on('gui-startup', function(cmd)
   local spawn = {}
-  if cmd then
-    for k, v in pairs(cmd) do
-      spawn[k] = v
-    end
+  for k, v in pairs(cmd or {}) do
+    spawn[k] = v
   end
   if spawn.position == nil then
-    spawn.position = clamp_window_position(get_configured_window_position())
+    spawn.position = clamp_window_position(configured_window_position())
   end
-  local ok, _tab_or_error, pane, mux_window = pcall(wezterm.mux.spawn_window, spawn)
+  local ok, tab_or_err, pane, mux_window = pcall(wezterm.mux.spawn_window, spawn)
   if not ok then
-    log_warn_rate_limited('startup-spawn', 'Failed to spawn startup window: ' .. tostring(_tab_or_error))
+    wezterm.log_warn('Failed to spawn startup window: ' .. tostring(tab_or_err))
     return
   end
-  refresh_spawned_window_status(mux_window, pane, 0.10)
-  refresh_spawned_window_status(mux_window, pane, 0.40)
+  -- Two early repaints let the GUI and the shell integration settle. The
+  -- timers hold plain ids: the objects may not outlive the delay.
+  local window_id, pane_id = mux_window:window_id(), pane:pane_id()
+  for _, delay in ipairs { 0.10, 0.40 } do
+    wezterm.time.call_after(delay, function()
+      local ok_refresh, err = pcall(function()
+        local live_window = wezterm.mux.get_window(window_id)
+        local live_pane = wezterm.mux.get_pane(pane_id)
+        local gui_window = live_window and live_window:gui_window()
+        if gui_window and live_pane then
+          paint_status(gui_window, live_pane)
+        end
+      end)
+      if not ok_refresh then
+        wezterm.log_warn('Failed to refresh startup status: ' .. tostring(err))
+      end
+    end)
+  end
 end)
+
 return config
 
 ----------------------------------------------------------------------------
