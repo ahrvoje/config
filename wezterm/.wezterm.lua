@@ -22,28 +22,12 @@ local function try(object, method, ...)
 end
 
 -- Seconds from a clock that never runs backwards. WezTerm gives Lua only
--- wall-clock time; a wall-clock correction must not make an elapsed time or
--- a cache age negative.
+-- wall-clock time; a wall-clock correction must not make an elapsed time
+-- negative.
 local last_clock = 0
 local function clock()
-  local ok, now = pcall(function()
-    return tonumber(wezterm.time.now():format_utc('%s%.3f'))
-  end)
-  if ok and now and now > last_clock then
-    last_clock = now
-  end
+  last_clock = math.max(last_clock, tonumber(wezterm.time.now():format_utc('%s%.3f')) or 0)
   return last_clock
-end
-
--- For warnings raised from paint paths, which repeat every second.
-local warned_at = {}
-local function warn_rate_limited(key, message)
-  local now = clock()
-  if warned_at[key] and now - warned_at[key] < 60 then
-    return
-  end
-  warned_at[key] = now
-  wezterm.log_warn(message)
 end
 
 --------------DEFAULT AND LOCAL CONFIGURATION--------------
@@ -492,17 +476,13 @@ local function action_kill_process(window, pane)
     return
   end
   -- Hold only the pane id across the delay: a pane object that dies before
-  -- the timer fires aborts the timer's coroutine.
+  -- the timer fires aborts the timer's coroutine. get_pane raises for a
+  -- closed pane.
   local pane_id = pane:pane_id()
   wezterm.time.call_after(0.5, function()
-    local ok, err = pcall(function()
-      local live_pane = wezterm.mux.get_pane(pane_id)
-      if live_pane and same_kill_target(target, kill_target(live_pane)) then
-        taskkill(target, true)
-      end
-    end)
-    if not ok then
-      wezterm.log_warn('Failed to run taskkill follow-up: ' .. tostring(err))
+    local ok, live_pane = pcall(wezterm.mux.get_pane, pane_id)
+    if ok and same_kill_target(target, kill_target(live_pane)) then
+      taskkill(target, true)
     end
   end)
 end
@@ -573,32 +553,31 @@ end
 --------------KEY TABLE ICONS--------------
 -- The right status shows one icon per active key table, per window.
 
-local window_states = {}  -- window_id -> { icons = {...}, seen = clock() }
+-- window_id -> { icons = {...} } plus the status fields, see STATUS BAR.
+local window_states = {}
 
-local function window_state(window)
-  local id = window:window_id()
-  local state = window_states[id]
+local function window_state(window_id)
+  local state = window_states[window_id]
   if not state then
     state = { icons = {} }
-    window_states[id] = state
+    window_states[window_id] = state
   end
-  state.seen = clock()
   return state
 end
 
 local function push_key_icon(icon)
   return function(window)
-    local icons = window_state(window).icons
+    local icons = window_state(window:window_id()).icons
     icons[#icons + 1] = icon
   end
 end
 
 local function pop_key_icon(window)
-  table.remove(window_state(window).icons)
+  table.remove(window_state(window:window_id()).icons)
 end
 
 local function clear_key_icons(window)
-  window_state(window).icons = {}
+  window_state(window:window_id()).icons = {}
 end
 
 --------------KEY TABLES AND BINDINGS--------------
@@ -726,13 +705,12 @@ config.mouse_bindings = {
 
 --------------PER-PANE MEMORY--------------
 -- Everything the status bar and tab titles remember about a pane, keyed by
--- pane id and expired by inactivity. Fields:
---   seen     last clock() the pane was painted
---   vars     user vars as of the last state_serial commit
---   cwd      display path read after the last cwd_ready
---   command  { token, started } of the running command, for the elapsed timer
---   settle   { shown, pending, since } anti-flicker state of the tab title
---   title    { name, pane_title, text } last formatted tab title
+-- pane id. Fields:
+--   vars      user vars as of the last state_serial commit
+--   cwd       display path as of the last commit
+--   next_cwd  display path read at the last cwd_ready, shown from the next commit
+--   command   { token, started } of the running command, for the elapsed timer
+--   settle    { shown, pending, since } anti-flicker state of the tab title
 
 local pane_states = {}
 
@@ -742,79 +720,55 @@ local function pane_state(pane_id)
     state = {}
     pane_states[pane_id] = state
   end
-  state.seen = clock()
   return state
 end
 
-local cache_prune_interval_seconds = 300
-local cache_retention_seconds = 3600
+local prune_interval_seconds = 300
 local last_prune = clock()
 
--- Live tabs are touched by status and title painting, so no mux sweep is
--- needed; whatever went untouched for an hour is gone.
-local function prune_stale_states()
+-- Forget the panes and windows that the mux no longer has. Inactivity is no
+-- sign of a closed pane: an unfocused split can run a command for hours.
+local function prune_closed()
   local now = clock()
-  if now - last_prune < cache_prune_interval_seconds then
+  if now - last_prune < prune_interval_seconds then
     return
   end
   last_prune = now
-  for id, state in pairs(pane_states) do
-    if now - state.seen >= cache_retention_seconds then
+  for id in pairs(pane_states) do
+    if not pcall(wezterm.mux.get_pane, id) then
       pane_states[id] = nil
     end
   end
-  for id, state in pairs(window_states) do
-    if now - state.seen >= cache_retention_seconds then
+  for id in pairs(window_states) do
+    if not pcall(wezterm.mux.get_window, id) then
       window_states[id] = nil
     end
   end
 end
 
--- Producers write several user vars per transition and emit state_serial
--- last. Each var triggers update-status, so painting is skipped while these
--- fields differ from the committed snapshot; the commit repaints once.
-local committed_fields = {
-  'shell_integration', 'shell_name', 'shell_prompt', 'process_name',
-  'command_token', 'clink', 'zsh', 'nvim', 'cwd_ready', 'state_serial',
-}
-
-local function batch_in_progress(state, live)
-  if not state.vars then
-    -- Nothing committed since config load: an integrated shell that has not
-    -- reached its state_serial yet is mid-batch; anything else is settled.
-    return live.shell_integration == 'on' and (live.state_serial or '') == ''
-  end
-  for _, name in ipairs(committed_fields) do
-    if live[name] ~= state.vars[name] then
-      return true
-    end
-  end
-  return false
-end
-
--- Read the CWD from the terminal's OSC 7 state. Only called right after a
--- producer signals cwd_ready: without an in-memory URI WezTerm would fall
--- back to scanning operating-system processes.
-local function refresh_cwd(pane, state)
+-- Read the CWD from the terminal's OSC 7 state; nil if the pane is gone.
+-- Only called once a producer has signalled cwd_ready: without an in-memory
+-- URI WezTerm would fall back to scanning operating-system processes.
+local function read_cwd(pane)
   local ok, cwd = pcall(pane.get_current_working_dir, pane)
   if not ok then
-    state.cwd = state.cwd or ''
-    return
+    return nil
   end
   if cwd ~= nil and type(cwd) ~= 'string' then
     cwd = cwd.file_path or tostring(cwd)  -- Url object; older builds return a string
   end
-  state.cwd = cwd and normalize_path(cwd) or ''
+  return cwd and normalize_path(cwd) or ''
 end
 
 local function display_cwd(pane, state, vars)
   if state.cwd == nil and (vars.cwd_ready or '') ~= '' then
-    refresh_cwd(pane, state)
+    state.cwd = read_cwd(pane) or ''
   end
   return state.cwd or ''
 end
 
--- Seconds since a new command_token was first seen; nil at the prompt.
+-- Starts the timer when a new command_token appears. Returns the seconds
+-- since then, or nil at the prompt.
 local function command_elapsed(state, vars)
   local token = vars.command_token or ''
   if token == '' or vars.shell_prompt == 'on' then
@@ -826,6 +780,15 @@ local function command_elapsed(state, vars)
     state.command = { token = token, started = now }
   end
   return now - state.command.started
+end
+
+-- Producers write several user vars per transition and emit state_serial
+-- last. The status bar and tab titles read only what a commit captured, so
+-- they never show a half-applied transition.
+local function commit(pane, state)
+  state.vars = try(pane, 'get_user_vars') or state.vars
+  state.cwd = state.next_cwd or state.cwd
+  command_elapsed(state, state.vars or {})  -- times a background command too
 end
 
 local function format_elapsed(seconds)
@@ -848,7 +811,7 @@ local function toggle_color(status)
   return status == 'on' and '#AF8461' or status == 'off' and '#6A946A' or '#666666'
 end
 
-local function format_right_status(window, pane, state, vars)
+local function format_right_status(window, pane, state, vars, icons, elapsed)
   local items = {}
   local function add(color, text)
     if text ~= '' then
@@ -856,9 +819,7 @@ local function format_right_status(window, pane, state, vars)
       items[#items + 1] = { Text = text }
     end
   end
-  local icons = window_state(window).icons
   local cwd = display_cwd(pane, state, vars)
-  local elapsed = command_elapsed(state, vars)
   add('Yellow', table.concat(icons, ' '))
   add('#4488FF', #icons > 0 and ' ' .. nf.md_arrow_expand_left .. '    ' or '')
   add('#BBBBBB', cwd ~= '' and wezterm.truncate_left(cwd, 60) .. '      ' or '')
@@ -870,41 +831,98 @@ local function format_right_status(window, pane, state, vars)
   return wezterm.format(items)
 end
 
-local function refresh_status(window, pane, state, vars)
-  window:set_left_status(format_left_status(window))
-  window:set_right_status(format_right_status(window, pane, state, vars))
+-- WezTerm formats tab titles only when it redraws the tab bar, and an idle
+-- window may not redraw for a long time. Make the first status paint at or
+-- after `at` redraw it.
+local function request_tab_redraw(window_id, at)
+  local state = window_state(window_id)
+  state.redraw_due = math.min(state.redraw_due or at, at)
 end
 
--- Paint from the committed snapshot; skip while a producer batch is open.
--- Before the first commit (e.g. after a config reload) the live vars are the
--- snapshot.
-local function paint_status(window, pane)
+local paint_status  -- defined below; timers repaint through it
+
+-- Repaint a window's status after `delay` seconds. The timer holds only the
+-- window id because the window can close first; a config reload cancels it.
+local function repaint_after(delay, window_id)
+  wezterm.time.call_after(delay, function()
+    local ok, mux_window = pcall(wezterm.mux.get_window, window_id)
+    local window = ok and mux_window:gui_window()
+    local pane = window and try(window, 'active_pane')
+    if pane then
+      paint_status(window, pane)
+    end
+  end)
+end
+
+-- WezTerm starts each status tick one interval after the previous one ends,
+-- so the ticks drift across the timer's seconds and it would skip one now
+-- and then. While a timer shows, also repaint just after its next second.
+local function schedule_timer_tick(window_id, state, elapsed)
+  local now = clock()
+  if (state.tick_due or 0) > now + 0.05 then
+    return  -- already pending
+  end
+  local delay = 1.02 - elapsed % 1
+  state.tick_due = now + delay
+  repaint_after(delay, window_id)
+end
+
+-- Paint the window's active pane from its last commit; a pane without
+-- integration shows its live vars. Always sets both statuses: WezTerm
+-- schedules the next status tick only when a status is set.
+-- Window status fields:
+--   tick_due    when the pending timer tick fires
+--   redraw_due  when a requested tab bar redraw is due
+--   right       last right status text, without the redraw toggle
+--   toggle      appends an invisible SGR reset that forces a redraw
+function paint_status(window, pane)
   local state = pane_state(pane:pane_id())
-  local live = try(pane, 'get_user_vars') or {}
-  if batch_in_progress(state, live) then
-    return
+  local vars = state.vars
+  if not vars then
+    vars = try(pane, 'get_user_vars') or {}
+    if (vars.state_serial or '') ~= '' then
+      state.vars = vars  -- committed before this config loaded
+    end
   end
-  if not state.vars and (live.state_serial or '') ~= '' then
-    state.vars = live
+  local window_id = window:window_id()
+  local ws = window_state(window_id)
+  local elapsed = command_elapsed(state, vars)
+  if elapsed then
+    schedule_timer_tick(window_id, ws, elapsed)
   end
-  refresh_status(window, pane, state, state.vars or live)
+  local right = format_right_status(window, pane, state, vars, ws.icons, elapsed)
+  -- WezTerm redraws the tab bar only when a status string changes. A due
+  -- redraw with an unchanged status flips the toggle to force one.
+  if ws.redraw_due and clock() >= ws.redraw_due then
+    ws.redraw_due = nil
+    if right == ws.right then
+      ws.toggle = not ws.toggle
+    end
+  end
+  ws.right = right
+  window:set_left_status(format_left_status(window))
+  window:set_right_status(ws.toggle and right .. '\x1b[0m' or right)
 end
 
 wezterm.on('user-var-changed', function(window, pane, name, value)
   local state = pane_state(pane:pane_id())
   if name == 'cwd_ready' and value ~= '' then
-    refresh_cwd(pane, state)
+    state.next_cwd = read_cwd(pane) or state.next_cwd
   elseif name == 'state_serial' then
-    state.vars = try(pane, 'get_user_vars') or state.vars
-    refresh_status(window, pane, state, state.vars or {})
+    commit(pane, state)
+    -- The event fires for every pane in the window, but only the active one
+    -- owns the status. A commit in any pane can change its tab title.
+    request_tab_redraw(window:window_id(), 0)
+    local active = try(window, 'active_pane')
+    if active then
+      paint_status(window, active)
+    end
   end
 end)
 
-wezterm.on('window-focus-changed', paint_status)
-
 wezterm.on('update-status', function(window, pane)
   paint_status(window, pane)
-  prune_stale_states()
+  prune_closed()
 end)
 
 --------------TAB TITLES--------------
@@ -943,10 +961,10 @@ end
 
 -- Flicker guard: a new name must persist for a second before it replaces the
 -- shown one, so a short-lived command (git, ls, a build step) never flips the
--- title. Re-evaluated on every redraw; no timers.
+-- title. A pending name requests the tab bar redraw that shows it.
 local tab_title_settle_seconds = 1.0
 
-local function settled_name(state, name)
+local function settled_name(state, name, window_id)
   local settle = state.settle
   if not settle then
     state.settle = { shown = name }
@@ -959,37 +977,27 @@ local function settled_name(state, name)
   elseif clock() - settle.since >= tab_title_settle_seconds then
     settle.shown, settle.pending = name, nil
   end
+  if settle.pending then
+    request_tab_redraw(window_id, settle.since + tab_title_settle_seconds)
+  end
   return settle.shown
 end
 
-local function tab_title_text(tab, max_width)
+wezterm.on('format-tab-title', function(tab, _tabs, _panes, _config, _hover, max_width)
   local width = math.max(1, max_width or 1)
   if tab.tab_title ~= '' then
     return wezterm.truncate_right(tab.tab_title, width)
   end
   local info = tab.active_pane
+  if not info then
+    return nil
+  end
   local state = pane_state(info.pane_id)
-  local vars = state.vars or info.user_vars
-  local name = settled_name(state, display_process_name(vars, info.title) or 'terminal')
-  local title = state.title
-  if not title or title.name ~= name or title.pane_title ~= info.title then
-    local prefix = info.title:match('^Copy mode:') and 'Copy mode: ' or ''
-    local icon = process_icons[name] or { '>', name }
-    title = { name = name, pane_title = info.title, text = prefix .. icon[1] .. ' ' .. icon[2] .. ' : ' .. info.pane_id }
-    state.title = title
-  end
-  return wezterm.truncate_right(title.text, width)
-end
-
-wezterm.on('format-tab-title', function(tab, _tabs, _panes, _config, _hover, max_width)
-  local ok, text = pcall(tab_title_text, tab, max_width)
-  if ok then
-    return text
-  end
-  warn_rate_limited('tab-title', 'Failed to format tab title: ' .. tostring(text))
-  -- Hold the last good title instead of dropping to the default for a tick.
-  local state = tab.active_pane and pane_states[tab.active_pane.pane_id]
-  return state and state.title and wezterm.truncate_right(state.title.text, math.max(1, max_width or 1)) or nil
+  local name = display_process_name(state.vars or info.user_vars, info.title) or 'terminal'
+  name = settled_name(state, name, tab.window_id)
+  local prefix = info.title:match('^Copy mode:') and 'Copy mode: ' or ''
+  local icon = process_icons[name] or { '>', name }
+  return wezterm.truncate_right(prefix .. icon[1] .. ' ' .. icon[2] .. ' : ' .. info.pane_id, width)
 end)
 
 --------------STARTUP--------------
@@ -1004,29 +1012,14 @@ wezterm.on('gui-startup', function(cmd)
   if spawn.position == nil then
     spawn.position = clamp_window_position(configured_window_position())
   end
-  local ok, tab_or_err, pane, mux_window = pcall(wezterm.mux.spawn_window, spawn)
+  local ok, tab_or_err, _, mux_window = pcall(wezterm.mux.spawn_window, spawn)
   if not ok then
     wezterm.log_warn('Failed to spawn startup window: ' .. tostring(tab_or_err))
     return
   end
-  -- Two early repaints let the GUI and the shell integration settle. The
-  -- timers hold plain ids: the objects may not outlive the delay.
-  local window_id, pane_id = mux_window:window_id(), pane:pane_id()
-  for _, delay in ipairs { 0.10, 0.40 } do
-    wezterm.time.call_after(delay, function()
-      local ok_refresh, err = pcall(function()
-        local live_window = wezterm.mux.get_window(window_id)
-        local live_pane = wezterm.mux.get_pane(pane_id)
-        local gui_window = live_window and live_window:gui_window()
-        if gui_window and live_pane then
-          paint_status(gui_window, live_pane)
-        end
-      end)
-      if not ok_refresh then
-        wezterm.log_warn('Failed to refresh startup status: ' .. tostring(err))
-      end
-    end)
-  end
+  -- Two early repaints let the GUI and the shell integration settle.
+  repaint_after(0.10, mux_window:window_id())
+  repaint_after(0.40, mux_window:window_id())
 end)
 
 return config
