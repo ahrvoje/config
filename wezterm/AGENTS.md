@@ -9,11 +9,11 @@ Windows, macOS/Darwin, MSYS2, and WSL. Per-machine files live under
 
 ## Configuration Layers
 
-`configured(key)` reads a whitelisted local override and otherwise uses
-`default_config`. Local keybindings are appended last so their duplicate keys
-win. Keep the whitelist explicit; currently it includes the leader, display,
-launch, timing, environment, and startup-size fields. `window_pos` merges its
-local fields over the default one by one.
+`defaults` holds the shared settings; every key of the `wezterm_local` table
+overrides them, except two. `keys` are appended last so their duplicate keys
+win, and `window_pos` (`x`, `y`) places the first window. A missing local
+module is normal; a local module that fails to load or does not return a
+table is a configuration error, shown by WezTerm.
 
 On Windows, merge `WEZTERM_PANE/u` into `WSLENV` without discarding configured
 environment variables or duplicating an existing case-insensitive entry.
@@ -62,7 +62,9 @@ shell behavior.
 - Status and tab titles show only committed state. `cwd_ready` reads the CWD
   into `next_cwd`. The final `state_serial` commit captures the user vars,
   promotes `next_cwd` and starts the command timer, for background panes too.
-  A pane that has never committed shows its live vars.
+  A pane whose producer published before this config loaded commits its live
+  vars on its first paint and reads the CWD then; a pane without a producer
+  shows its live vars.
 - `user-var-changed` fires for every pane in the window, not only the active
   one. A commit repaints the window's active pane and requests a tab bar
   redraw; it never paints the committing pane into the status.
@@ -82,8 +84,10 @@ shell behavior.
 - Tab titles require a process label to remain stable for one second before
   changing. WezTerm formats tab titles only when it redraws the tab bar, which
   Lua causes by changing a status string. A pending title and every commit
-  call `request_tab_redraw`; when the redraw is due and the right status is
-  unchanged, `paint_status` toggles an invisible trailing SGR reset.
+  set the window's `redraw_due`; when it is due, `paint_status` toggles an
+  invisible trailing SGR reset.
+- The right status shows the icon of `window:active_key_table()`. There is
+  no shadow copy of the key table stack to keep in sync.
 - `format-tab-title` is a synchronous callback. It reads only
   PaneInformation and Lua memory and records redraw requests; never schedule
   timers or call GUI methods from it. Preserve explicit tab titles and honor
@@ -100,14 +104,15 @@ shell behavior.
   to shell-owned fzf overlays, and Win32 input records to Clink popups.
 - Ctrl-D uses native terminal EOF only where the shell honours it. At an
   integrated prompt with `venv=on` it clears the line and submits
-  `deactivate`. cmd and PowerShell clear the buffer and submit `exit`;
+  `deactivate`. cmd clears the buffer and submits `exit`. PowerShell clears
+  the buffer and submits `deactivate` if that function exists, else `exit`.
   `python` and `ptpython` submit `exit()`. Keep `repl_exits` as the single
   table of the REPL special cases.
 - Ctrl-L always sends the Ctrl-L key; never append a textual `clear` command to
   a possibly non-empty shell buffer.
 - On Windows `LEADER+k` queries the foreground process only when pressed, runs
   asynchronous `taskkill /PID ... /T`, and escalates to `/F` after 0.5 seconds
-  only if PID/start-time/executable/name still match. A returned LocalProcessInfo
+  only if PID and start time still match. A returned LocalProcessInfo
   PID always goes to Windows `taskkill`; never reinterpret it as a WSL guest
   PID. An idle integrated shell and panes without local process information
   receive Ctrl-C. On non-Windows systems it sends Ctrl-C.
@@ -123,14 +128,14 @@ shell behavior.
 ## Platform Handling
 
 - Preserve leading `/` on Unix paths, `/C:` handling on Windows, and UNC
-  markers. OSC 7 producers percent-encode paths.
+  markers. OSC 7 producers percent-encode paths; WezTerm's `Url.file_path`
+  returns them decoded, without the host, as `/C:/...` on Windows.
 - macOS Cmd+Left/Right send logical Home/End keys so the active keyboard
   protocol chooses bytes; do not hard-code SS3 sequences.
-- Startup positions without an origin are clamped to the screen that
-  contains them, else to the active screen, so a window can start on a
-  secondary monitor. Positions with `MainScreen`, `ActiveScreen`, or `Named`
-  origin use coordinates relative to that screen; a missing named screen
-  falls back to `ActiveScreen`. Clamp stale values before spawning.
+- The startup position is clamped into the screen that contains it, else
+  into the active screen, so a window can start on a secondary monitor and a
+  stale value stays visible. `window_pos` has no origin field; coordinates
+  are absolute.
 - Startup status refreshes at 0.10 and 0.40 seconds deliberately allow the GUI
   and shell to settle; they are not polling loops.
 
