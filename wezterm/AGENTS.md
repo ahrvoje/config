@@ -52,7 +52,8 @@ shell behavior.
   PaneInformation, Lua memory and cheap GUI or mux accessors. The explicit
   `LEADER+k`, Esc and Ctrl-D keystrokes are the only exceptions; the latter
   two call `console_repl`, because a console REPL has no producer and one
-  started from the cmd prompt inherits Clink's stale user vars.
+  started from the cmd prompt inherits Clink's stale user vars. `console_repl`
+  queries the process on Windows only; elsewhere the REPLs handle both keys.
 - Never call `get_foreground_process_info`, `wezterm.procinfo`, battery APIs,
   filesystem probes, `mux.all_windows` or other mux-wide enumeration, child
   processes, or CLI commands from paint/status/key paths.
@@ -76,22 +77,37 @@ shell behavior.
 - Command elapsed time starts when a commit carries a new opaque
   `command_token`. `status_update_interval` stays at 1000 ms, but WezTerm
   starts each tick one interval after the previous one ends, so the ticks
-  drift. While a timer shows, a one-shot repaint just after each whole second
-  keeps the timer from skipping one; `tick_due` keeps one pending per window.
+  drift. While a timer shows, one loop per window (`run_timer`) requests a
+  status just after each whole second and sleeps in between. Never schedule
+  a `call_after` per second: WezTerm keeps every such callback until the
+  config reloads (270 bytes each, measured).
+- Timers never paint. They call `request_status`, which asks WezTerm to emit
+  `update-status`; WezTerm runs the event in the current Lua state and merges
+  it with the status ticks.
 - A config reload clears Lua state, cancels pending `call_after` callbacks
-  and clears the key table stack; running timers restart. Do not move them to
-  `wezterm.GLOBAL`: setting a key to nil leaves a null entry behind.
+  and clears the key table stack; running timers restart. A timer loop from
+  before the reload ends by itself: its requests run in the new Lua state
+  and count no ticks in the old one. Do not move state to `wezterm.GLOBAL`:
+  setting a key to nil leaves a null entry behind.
+- Do not register `format-tab-title`. WezTerm calls it twice per tab on every
+  tab bar update and converts the whole config to Lua for each call (0.4 ms);
+  one shell prompt causes about fifteen updates. `format-window-title` runs
+  once per update with the same snapshot. It sets the tab titles with
+  `tab:set_title()` and returns nothing, so WezTerm keeps its own window
+  title. `show_tab_index_in_tab_bar` is off because the titles are complete.
+- `format-window-title` is a synchronous callback. It reads only the snapshot
+  and Lua memory and may not call asynchronous window methods. An automatic
+  title ends with ` : <pane id>`; any other non-empty title is explicit and
+  stays.
 - Tab titles require a process label to remain stable for one second before
-  changing. WezTerm formats tab titles only when it redraws the tab bar, which
-  Lua causes by changing a status string. A pending title and every commit
-  set the window's `redraw_due`; when it is due, `paint_status` toggles an
-  invisible trailing SGR reset.
+  changing. WezTerm runs the tab bar handler only when it updates the tab
+  bar, which Lua causes by changing a status string. A pending title and
+  every commit set the window's `redraw_due`; when it is due, `paint_status`
+  toggles an invisible trailing SGR reset.
+- WezTerm has no event for a change of the active pane. The tab bar handler
+  requests a status when the active pane id of a window changes.
 - The right status shows the icon of `window:active_key_table()`. There is
   no shadow copy of the key table stack to keep in sync.
-- `format-tab-title` is a synchronous callback. It reads only
-  PaneInformation and Lua memory and records redraw requests; never schedule
-  timers or call GUI methods from it. Preserve explicit tab titles and honor
-  `max_width` on every string return.
 - Every five minutes `prune_closed` drops the state of panes and windows that
   `mux.get_pane`/`mux.get_window` no longer resolve. Never prune by
   inactivity: an unfocused split can run a command for hours.

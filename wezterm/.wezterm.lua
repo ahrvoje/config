@@ -86,6 +86,7 @@ config.check_for_updates = false
 config.disable_default_key_bindings = true
 config.inactive_pane_hsb = { hue = 1.0, saturation = 0.3, brightness = 0.4 }
 config.show_close_tab_button_in_tabs = false
+config.show_tab_index_in_tab_bar = false  -- the titles are complete, see TAB TITLES
 config.window_decorations = 'RESIZE'
 
 -- Selection of dark themes with acceptable contrast
@@ -147,9 +148,10 @@ end
 -- started from the cmd prompt inherits Clink's stale ones, so resolve them
 -- from the foreground process. Queried only on the explicit Esc and Ctrl-D
 -- keystrokes, never from paint, status or navigation; remote panes have no
--- local process info and stay pass-through.
+-- local process info and stay pass-through. On other systems the REPLs
+-- handle both keys themselves, so no process is queried.
 local function console_repl(pane)
-  local info = try(pane, 'get_foreground_process_info')
+  local info = is_windows and try(pane, 'get_foreground_process_info')
   local name = info and tostring(info.name):lower():match('[^/\\]+$')
   if name == 'pwsh.exe' or name == 'powershell.exe' then
     return 'powershell'
@@ -475,9 +477,12 @@ config.mouse_bindings = {
 --   command   { token, started } of the running command, for the elapsed timer
 --   shown, pending, since   anti-flicker state of the tab title
 -- Per window, keyed by window id:
---   tick_due    when the pending timer repaint fires
---   redraw_due  when a requested tab bar redraw is due
---   toggle      invisible status suffix that forces that redraw
+--   ticks        count of update-status events in this Lua state
+--   timer        true while the timer loop runs
+--   timer_start  start time of the command whose timer the status shows
+--   active_pane  pane that the tab bar last showed as active
+--   redraw_due   when a requested tab bar redraw is due
+--   toggle       invisible status suffix that forces that redraw
 
 local pane_states = autotable()
 local window_states = autotable()
@@ -573,39 +578,48 @@ local function format_right_status(window, pane, state, vars, elapsed)
   return wezterm.format(items)
 end
 
-local paint_status  -- defined below; timers repaint through it
+-- Ask WezTerm to emit update-status for a window. WezTerm runs the event in
+-- the current Lua state and merges it with the status ticks. The window can
+-- be closed already, so the callers hold only its id.
+local emit_update_status = act.EmitEvent 'update-status'
+local function request_status(window_id)
+  local ok, mux_window = pcall(wezterm.mux.get_window, window_id)
+  local window = ok and try(mux_window, 'gui_window')
+  local pane = window and try(mux_window, 'active_pane')
+  if pane then
+    try(window, 'perform_action', emit_update_status, pane)
+  end
+end
 
--- Repaint a window's status after `delay` seconds. The timer holds only the
--- window id because the window can close first; a config reload cancels it.
-local function repaint_after(delay, window_id)
-  wezterm.time.call_after(delay, function()
-    local ok, mux_window = pcall(wezterm.mux.get_window, window_id)
-    local window = ok and try(mux_window, 'gui_window')
-    local pane = window and try(window, 'active_pane')
-    if pane then
-      paint_status(window, pane)
-    end
-  end)
+local function request_status_after(delay, window_id)
+  wezterm.time.call_after(delay, function() request_status(window_id) end)
 end
 
 -- WezTerm starts each status tick one interval after the previous one ends,
 -- so the ticks drift across the timer's seconds and would skip one now and
--- then. While a timer shows, also repaint just after its next whole second.
-local function schedule_timer_tick(ws, window_id, elapsed)
-  local now = clock()
-  if (ws.tick_due or 0) > now then
-    return  -- one pending repaint per window
-  end
-  local delay = 1.02 - elapsed % 1
-  ws.tick_due = now + delay
-  repaint_after(delay, window_id)
+-- then. While a timer shows, one loop per window also requests a status just
+-- after each whole second. The loop sleeps between its requests: WezTerm
+-- keeps every call_after callback until the config reloads, so one call per
+-- second would grow the Lua heap without limit. A reload leaves the loop in
+-- the old Lua state. Its requests count no ticks there, so it ends.
+local function run_timer(window_id)
+  local ws = window_states[window_id]
+  repeat
+    local ticks = ws.ticks
+    request_status(window_id)
+    local started = ws.timer_start
+    if started then
+      wezterm.sleep_ms(math.ceil((1.02 - (clock() - started) % 1) * 1000))
+    end
+  until not ws.timer_start or ws.ticks == ticks
+  ws.timer = nil
 end
 
 -- Paint the window's active pane from its last commit. A pane that has not
 -- committed since this config loaded adopts its live vars when a producer
 -- published them earlier, and shows them live otherwise. Always sets both
 -- statuses: WezTerm schedules the next status tick only when a status is set.
-function paint_status(window, pane)
+local function paint_status(window, pane)
   local state = pane_states[pane:pane_id()]
   local vars = state.vars
   if not vars then
@@ -617,8 +631,10 @@ function paint_status(window, pane)
   local window_id = window:window_id()
   local ws = window_states[window_id]
   local elapsed = state.command and clock() - state.command.started
-  if elapsed then
-    schedule_timer_tick(ws, window_id, elapsed)
+  ws.timer_start = state.command and state.command.started
+  if elapsed and not ws.timer then
+    ws.timer = true
+    wezterm.time.call_after(0, function() run_timer(window_id) end)
   end
   -- WezTerm redraws the tab bar only when a status string changes. A due
   -- redraw flips an invisible suffix to force one.
@@ -654,13 +670,20 @@ wezterm.on('user-var-changed', function(window, pane, name)
 end)
 
 wezterm.on('update-status', function(window, pane)
+  local ws = window_states[window:window_id()]
+  ws.ticks = (ws.ticks or 0) + 1
   paint_status(window, pane)
   prune_closed()
 end)
 
 --------------TAB TITLES--------------
--- Tab titles use the PaneInformation snapshot and Lua memory only; they never
--- resolve a mux pane or query the operating system.
+-- WezTerm converts the whole configuration to Lua for each call of a tab bar
+-- handler. It calls format-tab-title twice per tab on every tab bar update,
+-- and one shell prompt causes some fifteen updates, so that handler stalls
+-- the GUI at each prompt. format-window-title runs once per update with the
+-- same tab snapshot. It assigns the tab titles through the mux and returns
+-- nothing, which keeps WezTerm's own window title. The titles use the
+-- snapshot and Lua memory only; they never query the operating system.
 
 local process_icons = {
   nvim       = { nf.custom_neovim,    'Neovim' },
@@ -688,7 +711,9 @@ local function display_process_name(vars, pane_title)
   if vars.nvim == 'on' then
     return 'nvim'
   end
-  return process_label(vars.process_name) or process_label(vars.shell_name) or process_label(pane_title) or 'terminal'
+  return process_label(vars.process_name) or process_label(vars.shell_name)
+    or pane_title:find('^MINGW%d+:') and 'gitbash'  -- Git Bash titles are 'MINGW64:<cwd>'
+    or process_label(pane_title) or 'terminal'
 end
 
 -- Flicker guard: a new name must persist for a second before it replaces the
@@ -708,20 +733,42 @@ local function settled_name(state, name, ws)
   return state.shown
 end
 
-wezterm.on('format-tab-title', function(tab, _, _, _, _, max_width)
-  if tab.tab_title ~= '' then
-    return wezterm.truncate_right(tab.tab_title, max_width)
-  end
-  local info = tab.active_pane
-  if not info then
-    return nil
-  end
+-- An automatic title ends with ' : <pane id>'. Any other non-empty title was
+-- set explicitly, for example with `wezterm cli set-tab-title`, and stays.
+local function is_automatic(title)
+  return title == '' or title:find(' : %d+$') ~= nil
+end
+
+local function automatic_title(info, ws)
   local state = pane_states[info.pane_id]
-  local name = display_process_name(state.vars or info.user_vars, info.title)
-  name = settled_name(state, name, window_states[tab.window_id])
+  -- A copy mode overlay reports the pane's title behind this prefix.
+  local title, copying = info.title:gsub('^Copy mode: ', '')
+  local name = display_process_name(state.vars or info.user_vars, title)
+  name = settled_name(state, name, ws)
   local icon = process_icons[name] or { '>', name }
-  local prefix = info.title:find('^Copy mode:') and 'Copy mode: ' or ''
-  return wezterm.truncate_right(prefix .. icon[1] .. ' ' .. icon[2] .. ' : ' .. info.pane_id, max_width)
+  return (copying > 0 and 'Copy mode: ' or '') .. icon[1] .. ' ' .. icon[2] .. ' : ' .. info.pane_id
+end
+
+wezterm.on('format-window-title', function(_, _, tabs)
+  for _, tab in ipairs(tabs) do
+    local info = tab.active_pane
+    if info then
+      local ws = window_states[tab.window_id]
+      local current = tab.tab_title
+      if is_automatic(current) then
+        local title = automatic_title(info, ws)
+        if title ~= current then
+          wezterm.mux.get_tab(tab.tab_id):set_title(title)
+        end
+      end
+      -- WezTerm has no event for a change of the active pane, and without
+      -- one the status lags up to one tick behind.
+      if tab.is_active and ws.active_pane ~= info.pane_id then
+        ws.active_pane = info.pane_id
+        request_status_after(0, tab.window_id)
+      end
+    end
+  end
 end)
 
 --------------STARTUP--------------
@@ -755,8 +802,8 @@ wezterm.on('gui-startup', function(cmd)
   cmd.position = cmd.position or visible_position(window_pos)
   local _, _, mux_window = wezterm.mux.spawn_window(cmd)
   -- Two early repaints let the GUI and the shell integration settle.
-  repaint_after(0.10, mux_window:window_id())
-  repaint_after(0.40, mux_window:window_id())
+  request_status_after(0.10, mux_window:window_id())
+  request_status_after(0.40, mux_window:window_id())
 end)
 
 return config

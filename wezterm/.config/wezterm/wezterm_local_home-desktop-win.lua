@@ -13,6 +13,9 @@ end
 
 return {
   front_end = 'WebGpu',
+  -- The monitor is on the discrete GPU. WezTerm's default is the integrated
+  -- GPU, where single frames stalled for 70 to 420 ms in tests.
+  webgpu_power_preference = 'HighPerformance',
 
   font = wezterm.font 'Consolas',
   font_size = 12,
