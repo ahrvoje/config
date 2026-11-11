@@ -56,6 +56,8 @@ local function cwd_state()
   if not ok or type(cwd) ~= 'string' or cwd == '' then return {} end
   return {
     osc('7;' .. vim.uri_from_fname(cwd)),
+    -- The status bar reads this var; OSC 7 serves WezTerm itself.
+    user_var('cwd', cwd),
     -- Kept after OSC 7, in the same terminal write, so WezTerm's CWD getter
     -- can only be called after its in-memory URI has been updated.
     user_var('cwd_ready', tostring(wezterm_state_seq + 1)),

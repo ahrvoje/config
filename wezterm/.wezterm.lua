@@ -472,7 +472,7 @@ config.mouse_bindings = {
 --------------STATUS BAR--------------
 -- Per pane, keyed by pane id:
 --   vars      user vars as of the last state_serial commit
---   cwd       display path as of the last commit
+--   cwd       OSC 7 display path as of the last commit; used when vars has no cwd
 --   next_cwd  display path read at the last cwd_ready, shown from the next commit
 --   command   { token, started } of the running command, for the elapsed timer
 --   shown, pending, since   anti-flicker state of the tab title
@@ -509,22 +509,36 @@ local function prune_closed()
   end
 end
 
--- The pane's CWD from its OSC 7 state as a display path; nil if the pane is
--- gone. Called only once a producer has signalled cwd_ready: without an OSC 7
--- URL WezTerm would fall back to inspecting operating-system processes.
-local function read_cwd(pane)
-  local ok, url = pcall(pane.get_current_working_dir, pane)
-  if not ok then
-    return nil
-  end
-  local path = url and url.file_path or ''  -- percent-decoded, host dropped
+-- A path as the status shows it. Both CWD sources pass through here, so they
+-- cannot disagree on the form.
+local function display_path(path)
   if is_windows then
-    path = path:gsub('^/(%a:)', '%1')  -- /C:/Users -> C:/Users
+    path = path:gsub('\\', '/'):gsub('^/(%a:)', '%1')  -- /C:/Users -> C:/Users
     if path:sub(1, 2) == '//' then
       path = path:gsub('/', '\\')  -- //server/share -> \\server\share
     end
   end
   return path
+end
+
+-- Fallback for a producer that publishes no `cwd` user var: the pane's CWD
+-- from its OSC 7 state; nil if the pane is gone. Called only once a producer
+-- has signalled cwd_ready: without an OSC 7 URL WezTerm would fall back to
+-- inspecting operating-system processes.
+local function read_cwd(pane)
+  local ok, url = pcall(pane.get_current_working_dir, pane)
+  if not ok then
+    return nil
+  end
+  -- A Url gives the path percent-decoded, without the host. Old WezTerm
+  -- versions return the URL as a string.
+  local path
+  if type(url) == 'userdata' then
+    ok, path = pcall(function() return url.file_path end)
+  elseif type(url) == 'string' then
+    path = url:gsub('^file://[^/]*', ''):gsub('%%(%x%x)', function(hex) return string.char(tonumber(hex, 16)) end)
+  end
+  return display_path(type(path) == 'string' and path or '')
 end
 
 -- Producers write several user vars per transition and emit state_serial
@@ -566,7 +580,9 @@ local function format_right_status(window, pane, state, vars, elapsed)
     end
   end
   local icon = key_table_icons[window:active_key_table()]
-  local cwd = state.cwd or ''
+  -- The `cwd` user var is part of the committed snapshot, so it needs no
+  -- second read and cannot be out of step with the other vars.
+  local cwd = vars.cwd and display_path(vars.cwd) or state.cwd or ''
   add('Yellow', icon or '')
   add('#4488FF', icon and ' ' .. nf.md_arrow_expand_left .. '    ' or '')
   add('#BBBBBB', cwd ~= '' and wezterm.truncate_left(cwd, 60) .. '      ' or '')

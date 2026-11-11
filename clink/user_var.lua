@@ -48,7 +48,9 @@ end
 
 local function encode_uri_path(path)
   path = tostring(path or ''):gsub('\\', '/')
-  return (path:gsub('[^%w/._~:-]', function(ch)
+  -- Explicit ASCII ranges: %w depends on the locale and can let raw non-ASCII
+  -- bytes through.
+  return (path:gsub('[^A-Za-z0-9/._~:-]', function(ch)
     return string.format('%%%02X', string.byte(ch))
   end))
 end
@@ -57,7 +59,9 @@ local function current_cwd_osc()
   local cwd = os.getcwd and os.getcwd() or nil
   if type(cwd) ~= 'string' or cwd == '' then return nil end
   -- Empty authority plus /C:/... yields the canonical file:///C:/... URI.
-  return osc('7;file:///' .. encode_uri_path(cwd):gsub('^/', ''))
+  -- The `cwd` user var carries the same path for the status bar: base64 is
+  -- plain ASCII, so no code page or URL parser can damage it.
+  return osc('7;file:///' .. encode_uri_path(cwd):gsub('^/', '')) .. user_var('cwd', cwd)
 end
 
 local function command_label(line)

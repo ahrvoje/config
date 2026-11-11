@@ -6,6 +6,7 @@
 # builtins: prompt hooks must never spawn base64, pwd, ps, or another helper.
 _wez_base64_ascii() {
   emulate -L zsh
+  unsetopt multibyte  # encode bytes, so a non-ASCII path stays valid UTF-8
   local input=$1 alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
   local output='' ch
   local -i i a b c i1 i2 i3 i4 length=${#input}
@@ -131,6 +132,7 @@ _wez_prompt_ready() {
     command_token '' \
     nvim off \
     venv ${${VIRTUAL_ENV:+on}:-off} \
+    cwd "$PWD" \
     zsh on
 }
 

@@ -30,13 +30,19 @@ OSC 1337 user variables instead:
 - `shell_prompt`: `on` only while the line editor owns the prompt.
 - `process_name`: best-effort, display-only command/application label.
 - `command_token`: opaque identity for the current command; never a timestamp.
+- `cwd`: the working folder as a native path in UTF-8. The status shows this
+  var from the committed snapshot. OSC 7 still goes out for WezTerm itself.
 - `cwd_ready`: changing serial emitted after OSC 7 updates terminal CWD state.
+  The status reads the OSC 7 path only when a producer publishes no `cwd`.
 - `state_serial`: emitted last to commit a coherent repaint.
 - `venv`: `on` while a Python virtual environment is active.
 - `clink`, `zsh`, `nvim`, `fzf`, `clink_popup`: integration/UI ownership flags.
 
 Current producers are `../zsh/.zshrc`, `../clink/user_var.lua`,
-`../nvim/init.lua`, and `../clink/rex/rex.lua`. Their prompt hooks use only
+`../nvim/init.lua`, and `../clink/rex/rex.lua`. `../pwsh/wezterm_cwd.ps1`
+serves PowerShell 5.1 and 7 and publishes only `cwd` and `state_serial`; it
+must not publish `shell_integration` or `shell_prompt`, because the Esc and
+Ctrl-D actions resolve PowerShell through `console_repl`. Their prompt hooks use only
 in-process encoding and batched terminal writes; never add `base64`, `pwd`,
 `ps`, shell-command substitutions, or other child processes to these hooks.
 When running through tmux, double the inner ESC byte in every DCS passthrough.
@@ -60,8 +66,9 @@ shell behavior.
 - `pane:get_current_working_dir()` is allowed only once `cwd_ready` has been
   published; OSC 7 must precede that marker so WezTerm cannot fall back to
   operating-system process inspection.
-- Status and tab titles show only committed state. `cwd_ready` reads the CWD
-  into `next_cwd`. The final `state_serial` commit captures the user vars,
+- Status and tab titles show only committed state. The `cwd` user var wins
+  over the OSC 7 path; both pass through `display_path`. `cwd_ready` reads
+  the CWD into `next_cwd`. The final `state_serial` commit captures the user vars,
   promotes `next_cwd` and starts the command timer, for background panes too.
   A pane whose producer published before this config loaded commits its live
   vars on its first paint and reads the CWD then; a pane without a producer
