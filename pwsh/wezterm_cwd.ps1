@@ -7,6 +7,19 @@
 
 if (-not $env:WEZTERM_PANE -or $global:WezTermPrompt) { return }
 
+if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsInputRedirected) {
+    Set-PSReadLineKeyHandler -Chord Ctrl+d -ScriptBlock {
+        [Microsoft.PowerShell.PSConsoleReadLine]::RevertLine()
+        if (Test-Path Function:deactivate) {
+            deactivate
+            [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+        } else {
+            $Host.SetShouldExit(0)
+            [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+        }
+    }
+}
+
 $global:WezTermPrompt = $function:prompt
 $global:WezTermSerial = 0
 

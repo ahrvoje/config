@@ -184,15 +184,12 @@ local function submit(clear_line, command)
 end
 
 -- Ctrl-D keeps native EOF semantics where the shell honours it. At an
--- integrated prompt an active Python venv is deactivated first; cmd.exe,
--- PowerShell and the Python REPLs get an explicit exit command because they
--- ignore Ctrl-D. PowerShell publishes no user vars, so it decides itself: the
--- `deactivate` function exists only while an Activate.ps1 venv is active.
+-- integrated prompt an active Python venv is deactivated first. PowerShell
+-- handles Ctrl-D in PSReadLine. cmd.exe and Python need an exit command.
 local exit_cmd = submit(clear_cmd_line, 'exit')
 local deactivate_venv_cmd = submit(clear_cmd_line, 'deactivate')
 local deactivate_venv_shell = submit(clear_shell_line, 'deactivate')
 local repl_exits = {
-  powershell = submit(clear_cmd_line, 'if (Test-Path Function:deactivate) { deactivate } else { exit }'),
   python     = act.SendString 'exit()\r',
   ptpython   = act.SendString 'exit()\n',
 }
