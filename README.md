@@ -2,11 +2,11 @@
 Configurations of the most used apps &amp; utilities.
 
 ## Total Commander
-Total Commander setup with the color scheme and various settings for the efficient use.
+The profile includes 23 file-color rules, keyboard shortcuts and three custom column views. The link colors use the NTLinks content plugin. [Set up the Total Commander profile](totalcmd/README.md).
 
-![Total Commander screenshot](/totalcmd/totalcmd_screen.png)
+![Total Commander file panels showing blue Mathematica notebooks beside source files, images and documents](/totalcmd/totalcmd_screen.png)
 
-![Total Commander colors by item types](/totalcmd/totalcmd_types_colors.png)
+![Total Commander's Define colors by file type dialog showing the rules in priority order](/totalcmd/totalcmd_types_colors.png)
 
 # Wezterm
 
