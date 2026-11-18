@@ -1,0 +1,5 @@
+[plugininstall]
+type=wdx
+file=DirActivity.wdx
+defaultdir=DirActivity
+description=Directory colors based on the latest write timestamp in an indexed directory tree.

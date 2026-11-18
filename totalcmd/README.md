@@ -6,6 +6,7 @@
 2. For a fresh profile, copy the six `.ini` files from this folder into that settings folder. If the installer has already created a `wincmd.ini`, keep a backup. Follow the merge instructions below if it contains settings you want to keep.
 3. Start Total Commander normally. It loads `usercmd.ini` automatically. On a machine with a G drive, press **Shift+G** in a file panel to switch to that drive. Right-click a file-panel column header to select **Size**, **Random** or **Created**.
 4. For the three NTFS link colors, download the NTLinks ZIP and open it inside Total Commander. Accept the plugin installation and its default folder. Repeat this step on each new installation that lacks NTLinks. The same archive supports 32-bit and 64-bit Total Commander. [NTLinks 1.6.1.294](https://totalcmd.net/plugring/ntlinks.html)
+5. Open [DirActivity.zip](DirActivity/DirActivity.zip) in Total Commander and accept the plugin installation. It includes 32-bit and 64-bit builds.
 
 To inspect the commands, open **Configuration → Options → Misc.** Under **Redefine hotkeys**, click the small down arrow beside **Hotkey** and choose the existing **Shift+G** binding. The **Command** field should show `em_GotoDriveG`. Click the magnifying glass beside that field to open **Choose command**. Near the bottom of its **Category** list, select **usercmd.ini** to see the drive commands from G through Y. Click **Cancel** when finished inspecting.
 
@@ -15,7 +16,7 @@ On reinstall, select the same settings folder in Setup. All six files are then a
 | --- | --- |
 | `wincmd.ini` | Directs each settings section to its file with `RedirectSection`. |
 | `preferences.ini` | File panels, fonts, selection, confirmations, ZIP compression and Lister. |
-| `file-colors.ini` | The palette, 23 ordered color rules and their named search definitions. |
+| `file-colors.ini` | The palette, 25 ordered color rules and their named search definitions. |
 | `shortcuts.ini` | F2 renames the item under the cursor. Shift+F2 edits the path above the active file panel. Ctrl+C copies full names. Shift+letter selects drives A and C through Z. |
 | `columns.ini` | The Size, Random and Created column sets. All three use Total Commander's built-in fields. |
 | `usercmd.ini` | Named drive commands for G through Y. Total Commander reads this file beside the active `wincmd.ini`. |
@@ -25,6 +26,14 @@ Total Commander writes plugin registrations to `plugins.ini`, the Start menu and
 ## File colors
 
 Total Commander uses the first matching rule. Symbolic links, junctions and hard-linked files keep their link colors at every age. Other items appear white for the first 15 minutes after modification, then light gray until one hour. After that, a video such as `.mkv` or `.mp4` appears bright cyan (`#00FFFF`). Subtitle files such as `.srt`, `.ass` and `.vtt` use the default gray (`#88959F`).
+
+With Everything running, an indexed file modified within the last 15 minutes turns each containing directory white up to the drive root. The folders appear light gray from 15 to 60 minutes. The folder’s own modification time also counts. For example, rebuilding `C:\repos\sandy_cli\x64\Release\sandy.exe` can highlight `Release`, `x64`, `sandy_cli` and `repos`. Drive buttons and the `[..]` navigation entry use Total Commander’s own appearance.
+
+DirActivity queries Everything directly. It supports the standard instance and the named `1.5a` instance. ES is unnecessary. Without an index, the plugin checks files directly inside each folder.
+
+The active file panel updates while idle. A background worker checks about every five seconds, then asks Total Commander to refresh when a folder changes color. It defers the refresh while items are marked or a modal dialog is open. Switch to the other panel to enable live updates there.
+
+To rebuild DirActivity, use an x86 or x64 Visual Studio Developer Command Prompt. Compile `DirActivity.cpp` with `/std:c++17 /O2 /MT /EHsc /LD`, add the SDK’s `ipc` directory to the include path, and link with `user32.lib /DEF:DirActivity.def`. Use the output name `DirActivity.wdx` for x86 and `DirActivity.wdx64` for x64. The SDK supplies the protocol header at build time. [Everything SDK](https://www.voidtools.com/support/everything/sdk/)
 
 | Link | Color | What gets the color |
 | --- | --- | --- |
