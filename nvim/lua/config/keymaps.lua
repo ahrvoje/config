@@ -13,8 +13,8 @@ vim.keymap.set("n", "<C-M-j>", "<cmd>rightbelow split<CR>",  { desc = "Split pan
 vim.keymap.set("n", "<C-M-k>", "<cmd>leftabove split<CR>",   { desc = "Split pane up" })
 vim.keymap.set("n", "<C-M-l>", "<cmd>rightbelow vsplit<CR>", { desc = "Split pane right" })
 
-vim.keymap.set("n", "<Tab>",   "<cmd>BufferLineCycleNext<CR>", { desc = "Next buffer" })
-vim.keymap.set("n", "<S-Tab>", "<cmd>BufferLineCyclePrev<CR>", { desc = "Previous buffer" })
+vim.keymap.set("n", "<Tab>",   "<cmd>bnext<CR>", { desc = "Next buffer" })
+vim.keymap.set("n", "<S-Tab>", "<cmd>bprevious<CR>", { desc = "Previous buffer" })
 
 vim.keymap.set("n", "<leader>w", "<cmd>setlocal wrap!<CR>", { desc = "Toggle wrap / nowrap" })
 vim.keymap.set("n", "<leader>e", "<cmd>setlocal noendofline!<CR>", { desc = "Toggle EOF" })
@@ -29,7 +29,7 @@ end, { desc = "Toggle solarized dark/light" })
 
 vim.keymap.set("n", "<leader>x", "<cmd>bd<CR>", { desc = "Close buffer" })
 
-vim.keymap.set("n", "<Esc>", ":nohlsearch<CR>", { silent = true, desc = "Clear search highlight" })
+vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<CR><Esc>", { silent = true, desc = "Clear search highlight" })
 
 -- PageUp/PageDown: scroll full page, move cursor
 vim.keymap.set("n", "<PageUp>",   "<C-b>", { desc = "Page up" })

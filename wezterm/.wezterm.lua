@@ -78,7 +78,10 @@ for _, source in ipairs { defaults, local_config } do
     end
   end
 end
-local window_pos = local_config.window_pos or defaults.window_pos
+local window_pos = local_config.window_pos
+if window_pos == nil then
+  window_pos = defaults.window_pos
+end
 
 config.adjust_window_size_when_changing_font_size = false
 config.audible_bell = 'Disabled'
@@ -224,6 +227,8 @@ local function action_escape(window, pane)
   local action
   if window:leader_is_active() then
     action = plain_escape
+  elseif ctx.vars.nvim == 'on' and is_alt_screen(pane) then
+    action = is_windows and ctx.vars.nvim_win32 == 'on' and win32_escape or plain_escape
   elseif ctx.vars.fzf == 'on' then
     -- The shell's fzf wrapper flags fzf ownership; inline fzf never enters
     -- the alt screen.
@@ -812,7 +817,9 @@ end
 
 wezterm.on('gui-startup', function(cmd)
   cmd = cmd or {}
-  cmd.position = cmd.position or visible_position(window_pos)
+  if not cmd.position and window_pos then
+    cmd.position = visible_position(window_pos)
+  end
   local _, _, mux_window = wezterm.mux.spawn_window(cmd)
   -- Two early repaints let the GUI and the shell integration settle.
   request_status_after(0.10, mux_window:window_id())

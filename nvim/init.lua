@@ -1,3 +1,4 @@
+vim.loader.enable()
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 
@@ -6,101 +7,77 @@ vim.opt.fixeol = false
 
 -- Publish Neovim state and OSC 7 CWD without spawning helpers. This is a
 -- display/routing protocol; destructive WezTerm actions never trust it.
-local wezterm_integration = os.getenv('WEZTERM_PANE') ~= nil
-local wezterm_in_tmux = os.getenv('TMUX') ~= nil
-local wezterm_state_seq = 0
+if vim.env.WEZTERM_PANE then
+  local wezterm_in_tmux = os.getenv('TMUX') ~= nil
+  local wezterm_state_seq = 0
 
-local function b64(value)
-  local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-  local output, length = {}, #value
-  for i = 1, length, 3 do
-    local a = value:byte(i) or 0
-    local b = value:byte(i + 1) or 0
-    local c = value:byte(i + 2) or 0
-    local n = a * 65536 + b * 256 + c
-    local c1 = math.floor(n / 262144) % 64
-    local c2 = math.floor(n / 4096) % 64
-    local c3 = math.floor(n / 64) % 64
-    local c4 = n % 64
-    output[#output + 1] = alphabet:sub(c1 + 1, c1 + 1)
-    output[#output + 1] = alphabet:sub(c2 + 1, c2 + 1)
-    output[#output + 1] = i + 1 <= length and alphabet:sub(c3 + 1, c3 + 1) or '='
-    output[#output + 1] = i + 2 <= length and alphabet:sub(c4 + 1, c4 + 1) or '='
+  local function osc(body)
+    local sequence = '\27]' .. body .. '\7'
+    if wezterm_in_tmux then
+      -- Prefix ESC plus the OSC's own ESC gives tmux the doubled inner ESC.
+      sequence = '\27Ptmux;\27' .. sequence .. '\27\\'
+    end
+    return sequence
   end
-  return table.concat(output)
-end
 
-local function osc(body)
-  local sequence = '\27]' .. body .. '\7'
-  if wezterm_in_tmux then
-    -- Prefix ESC plus the OSC's own ESC gives tmux the doubled inner ESC.
-    sequence = '\27Ptmux;\27' .. sequence .. '\27\\'
+  local function user_var(name, value)
+    return osc(string.format('1337;SetUserVar=%s=%s', name, vim.base64.encode(value)))
   end
-  return sequence
-end
 
-local function user_var(name, value)
-  return osc(string.format('1337;SetUserVar=%s=%s', name, b64(value)))
-end
+  local function cwd_state()
+    -- Vim's logical CWD respects :lcd/:tcd; libuv's process CWD does not always
+    -- represent the active window after a scoped directory change.
+    local ok, cwd = pcall(vim.fn.getcwd)
+    if not ok or type(cwd) ~= 'string' or cwd == '' then return {} end
+    return {
+      osc('7;' .. (vim.uri and vim.uri.from_fname or vim.uri_from_fname)(cwd)),
+      -- The status bar reads this var; OSC 7 serves WezTerm itself.
+      user_var('cwd', cwd),
+      -- Kept after OSC 7, in the same terminal write, so WezTerm's CWD getter
+      -- can only be called after its in-memory URI has been updated.
+      user_var('cwd_ready', tostring(wezterm_state_seq + 1)),
+    }
+  end
 
-local function send_terminal_state(parts)
-  if wezterm_integration then
+  local function commit_state(parts)
+    wezterm_state_seq = wezterm_state_seq + 1
+    parts[#parts + 1] = user_var('state_serial', tostring(wezterm_state_seq))
     vim.api.nvim_chan_send(2, table.concat(parts))
   end
-end
 
-local function cwd_state()
-  -- Vim's logical CWD respects :lcd/:tcd; libuv's process CWD does not always
-  -- represent the active window after a scoped directory change.
-  local ok, cwd = pcall(vim.fn.getcwd)
-  if not ok or type(cwd) ~= 'string' or cwd == '' then return {} end
-  return {
-    osc('7;' .. vim.uri_from_fname(cwd)),
-    -- The status bar reads this var; OSC 7 serves WezTerm itself.
-    user_var('cwd', cwd),
-    -- Kept after OSC 7, in the same terminal write, so WezTerm's CWD getter
-    -- can only be called after its in-memory URI has been updated.
-    user_var('cwd_ready', tostring(wezterm_state_seq + 1)),
-  }
+  local grp = vim.api.nvim_create_augroup('NvimVar', { clear = true })
+  vim.api.nvim_create_autocmd('VimEnter', {
+    group = grp,
+    callback = function()
+      local parts = {
+        user_var('shell_prompt', 'off'),
+        user_var('process_name', 'nvim'),
+        user_var('nvim', 'on'),
+        user_var('nvim_win32', vim.fn.has('win32') == 1 and 'on' or 'off'),
+      }
+      vim.list_extend(parts, cwd_state())
+      commit_state(parts)
+    end,
+  })
+  vim.api.nvim_create_autocmd('DirChanged', {
+    group = grp,
+    callback = function()
+      commit_state(cwd_state())
+    end,
+  })
+  local nvim_exit_state_sent = false
+  vim.api.nvim_create_autocmd({ 'VimLeavePre', 'VimLeave' }, {
+    group = grp,
+    callback = function()
+      if nvim_exit_state_sent then return end
+      nvim_exit_state_sent = true
+      commit_state {
+        user_var('nvim', 'off'),
+        user_var('process_name', ''),
+      }
+    end,
+  })
 end
-
-local function commit_state(parts)
-  wezterm_state_seq = wezterm_state_seq + 1
-  parts[#parts + 1] = user_var('state_serial', tostring(wezterm_state_seq))
-  send_terminal_state(parts)
-end
-
-local grp = vim.api.nvim_create_augroup('NvimVar', { clear = true })
-vim.api.nvim_create_autocmd('VimEnter', {
-  group = grp,
-  callback = function()
-    local parts = {
-      user_var('shell_prompt', 'off'),
-      user_var('process_name', 'nvim'),
-      user_var('nvim', 'on'),
-    }
-    vim.list_extend(parts, cwd_state())
-    commit_state(parts)
-  end,
-})
-vim.api.nvim_create_autocmd('DirChanged', {
-  group = grp,
-  callback = function()
-    commit_state(cwd_state())
-  end,
-})
-local nvim_exit_state_sent = false
-vim.api.nvim_create_autocmd({ 'VimLeavePre', 'VimLeave' }, {
-  group = grp,
-  callback = function()
-    if nvim_exit_state_sent then return end
-    nvim_exit_state_sent = true
-    commit_state {
-      user_var('nvim', 'off'),
-      user_var('process_name', ''),
-    }
-  end,
-})
 
 -- highlight on yank
 local group = vim.api.nvim_create_augroup('YankHighlight', { clear = true })
@@ -108,7 +85,7 @@ vim.api.nvim_create_autocmd('TextYankPost', {
   group = group,
   pattern = '*',
   callback = function()
-    vim.highlight.on_yank { higroup = 'IncSearch', timeout = 200 }
+    vim.hl.on_yank { higroup = 'IncSearch', timeout = 200 }
   end,
   desc = 'Briefly highlight yanked text',
 })
@@ -175,30 +152,26 @@ do
     if not vim.api.nvim_buf_is_valid(bufnr) or not vim.api.nvim_buf_is_loaded(bufnr) then
       return
     end
-    vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
     local line_count = vim.api.nvim_buf_line_count(bufnr)
     last_line_count[bufnr] = line_count
     if line_count < 1 then return end
 
     local mark, hl = marker_for(bufnr)
     vim.api.nvim_buf_set_extmark(bufnr, ns, line_count - 1, -1, {
+      id = 1,
       virt_text = { { mark, hl } },
       virt_text_pos = "eol",
       hl_mode = "combine",
     })
   end
 
-  vim.api.nvim_create_autocmd(
-    { "BufReadPost", "BufNewFile", "BufWritePost", "BufEnter", "WinEnter", "OptionSet" },
-    {
-      callback = function(args)
-        if args.event == "OptionSet" and args.match ~= "fileformat" and args.match ~= "endofline" then
-          return
-        end
-        place_marker(args.buf)
-      end,
-    }
-  )
+  local function refresh_marker(ev) place_marker(ev.buf) end
+  vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter" }, { callback = refresh_marker })
+  vim.api.nvim_create_autocmd("OptionSet", {
+    pattern = { "fileformat", "endofline" }, callback = refresh_marker,
+  })
+
+  vim.api.nvim_create_autocmd("BufWipeout", { callback = function(ev) last_line_count[ev.buf] = nil end })
 
   -- lightweight: only re-place when line count actually changed
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
@@ -218,39 +191,11 @@ end
 
 local gh = function(x) return 'https://github.com/' .. x end
 
-vim.pack.add({
-  -- UI: colorscheme, statusline, notifications
-  gh('maxmx03/solarized.nvim'),
-  gh('nvim-lualine/lualine.nvim'),
-  gh('nvim-tree/nvim-web-devicons'),
-  gh('folke/noice.nvim'),
-  gh('MunifTanjim/nui.nvim'),
-  gh('rcarriga/nvim-notify'),
-  gh('akinsho/bufferline.nvim'),
-
-  -- Editing: treesitter, git, indentation, session, resize
-  gh('nvim-treesitter/nvim-treesitter'),
-  gh('lewis6991/gitsigns.nvim'),
-  gh('tpope/vim-sleuth'),
-  gh('kwkarlwang/bufresize.nvim'),
-  gh('folke/persistence.nvim'),
-  gh('ahmedkhalf/project.nvim'),
-  gh('nvim-lua/plenary.nvim'),
-
-  -- Deferred: loaded on demand via keymaps/events/commands
-  { src = gh('nvim-telescope/telescope.nvim'), version = '0.1.6', load = false },
-  { src = gh('nvim-telescope/telescope-fzf-native.nvim'), load = false },
-  { src = gh('nvim-telescope/telescope-ui-select.nvim'), load = false },
-  { src = gh('nvim-neo-tree/neo-tree.nvim'), version = 'v3.x', load = false },
-  { src = gh('stevearc/oil.nvim'), load = false },
-  { src = gh('MagicDuck/grug-far.nvim'), load = false },
-  { src = gh('mbbill/undotree'), load = false },
-  { src = gh('folke/which-key.nvim'), load = false },
-  { src = gh('windwp/nvim-autopairs'), load = false },
-  { src = gh('lifer0se/ezbookmarks.nvim'), load = false },
-  { src = gh('mg979/vim-visual-multi'), load = false },
-  { src = gh('folke/flash.nvim'), load = false },
-})
+-- Native parser and fuzzy finder builds need a compiler in the editor's PATH.
+if vim.fn.has('win32') == 1 and vim.fn.executable('gcc') == 0 and vim.fn.executable('C:/msys64/ucrt64/bin/gcc.exe') == 1 then
+  -- GCC's child processes must resolve DLLs from the same toolchain.
+  vim.env.PATH = 'C:/msys64/ucrt64/bin;' .. vim.env.PATH
+end
 
 -- Build hooks
 vim.api.nvim_create_autocmd('PackChanged', {
@@ -259,113 +204,106 @@ vim.api.nvim_create_autocmd('PackChanged', {
     if kind ~= 'install' and kind ~= 'update' then return end
 
     if name == 'nvim-treesitter' then
-      if not ev.data.active then vim.cmd.packadd('nvim-treesitter') end
-      vim.cmd('TSUpdate')
+      vim.cmd.packadd('nvim-treesitter')
+      local ts = require('nvim-treesitter')
+      if kind == 'install' then
+        ts.install(vim.split('bash c cpp diff go html javascript json julia lua markdown python regex rust toml typescript vim vimdoc xml yaml zig csv', ' '))
+      else
+        ts.update()
+      end
     elseif name == 'telescope-fzf-native.nvim' then
-      if vim.fn.executable('make') == 1 then
-        vim.system({ 'make' }, { cwd = ev.data.path })
+      local command
+      if vim.fn.has('win32') == 1 and vim.fn.executable('gcc') == 1 then
+        -- The Windows make rule fails when the build directory already exists.
+        vim.fn.mkdir(ev.data.path .. '/build', 'p')
+        command = { 'gcc', '-O3', '-std=gnu99', '-shared', 'src/fzf.c', '-o', 'build/libfzf.dll' }
+      elseif vim.fn.executable('make') == 1 then
+        command = { 'make' }
+      end
+      if command then
+        local result = vim.system(command, { cwd = ev.data.path, text = true }):wait()
+        if result.code ~= 0 then vim.notify(result.stderr, vim.log.levels.ERROR) end
       end
     end
   end,
 })
 
+vim.pack.add({
+  -- UI: colorscheme, statusline, notifications
+  gh('folke/which-key.nvim'),
+  gh('nvim-mini/mini.icons'),
+  gh('maxmx03/solarized.nvim'),
+  gh('nvim-lualine/lualine.nvim'),
+  gh('nvim-tree/nvim-web-devicons'),
+  gh('folke/noice.nvim'),
+  gh('MunifTanjim/nui.nvim'),
+  gh('rcarriga/nvim-notify'),
+
+  -- Editing: treesitter, git, indentation, session, resize
+  gh('nvim-treesitter/nvim-treesitter'),
+  gh('tpope/vim-sleuth'),
+  gh('kwkarlwang/bufresize.nvim'),
+  gh('folke/persistence.nvim'),
+  gh('ahmedkhalf/project.nvim'),
+  gh('nvim-lua/plenary.nvim'),
+})
+
+vim.pack.add({
+  -- Deferred until the first matching buffer, key or command.
+  gh('lewis6991/gitsigns.nvim'),
+  gh('nvim-telescope/telescope.nvim'),
+  gh('nvim-telescope/telescope-fzf-native.nvim'),
+  gh('nvim-telescope/telescope-ui-select.nvim'),
+  { src = gh('nvim-neo-tree/neo-tree.nvim'), version = 'v3.x' },
+  gh('stevearc/oil.nvim'),
+  gh('MagicDuck/grug-far.nvim'),
+  gh('mbbill/undotree'),
+  gh('windwp/nvim-autopairs'),
+  gh('lifer0se/ezbookmarks.nvim'),
+  gh('mg979/vim-visual-multi'),
+  gh('folke/flash.nvim'),
+}, { load = function() end }) -- Add to runtimepath only at the first trigger.
+
 -------------------------------------------------------------------------------
--- Plugin configs (scheduled after vim.pack finishes loading rtp)
+-- Plugin setup and first-use triggers
 -------------------------------------------------------------------------------
 
-vim.schedule(function()
-
-  -- Deferred-loading helpers
-  local loaded = {}
-
-  local function ensure_loaded(name, config_fn)
-    if loaded[name] then return end
-    loaded[name] = true
-    vim.cmd.packadd(name)
-    if config_fn then config_fn() end
-  end
-
-  local function defer_keys(name, keys, config_fn)
-    for _, k in ipairs(keys) do
-      local mode = k.mode or "n"
-      vim.keymap.set(mode, k[1], function()
-        for _, k2 in ipairs(keys) do
-          pcall(vim.keymap.del, k2.mode or "n", k2[1])
-        end
-        ensure_loaded(name, config_fn)
-        local feed = vim.api.nvim_replace_termcodes(k[1], true, false, true)
-        vim.api.nvim_feedkeys(feed, "m", false)
-      end, { desc = k.desc or ("Lazy: " .. name) })
+-- Start highlighting for filetypes with an installed parser.
+vim.api.nvim_create_autocmd("FileType", {
+  callback = function(ev)
+    local lang = vim.treesitter.language.get_lang(ev.match)
+    if lang and vim.treesitter.language.add(lang) then
+      vim.treesitter.start(ev.buf, lang)
+      if vim.treesitter.query.get(lang, "indents") then
+        vim.bo[ev.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+      end
     end
-  end
+  end,
+})
 
-  local function defer_event(name, events, config_fn)
-    vim.api.nvim_create_autocmd(events, {
+do
+  -- CmdUndefined loads the real command for both typed commands and mappings.
+  local function load_on_command(name, command, configure)
+    vim.api.nvim_create_autocmd("CmdUndefined", {
+      pattern = command,
       once = true,
       callback = function()
-        ensure_loaded(name, config_fn)
+        vim.cmd.packadd(name)
+        if configure then configure() end
       end,
     })
   end
-
-  local function defer_cmd(name, cmds, config_fn)
-    for _, c in ipairs(cmds) do
-      vim.api.nvim_create_user_command(c, function(a)
-        vim.api.nvim_del_user_command(c)
-        ensure_loaded(name, config_fn)
-        vim.cmd(c .. " " .. (a.args or ""))
-      end, { nargs = "*", desc = "Lazy: " .. c })
-    end
-  end
-
-  ---------------------------------------------------------------------------
-  -- Eager plugin configs — packadd first, then configure
-  ---------------------------------------------------------------------------
-
-  -- Load all eager plugins into rtp
-  vim.cmd.packadd("solarized.nvim")
-  vim.cmd.packadd("nvim-web-devicons")
-  vim.cmd.packadd("lualine.nvim")
-  vim.cmd.packadd("nui.nvim")
-  vim.cmd.packadd("nvim-notify")
-  vim.cmd.packadd("bufferline.nvim")
-  vim.cmd.packadd("noice.nvim")
-  vim.cmd.packadd("nvim-treesitter")
-  vim.cmd.packadd("gitsigns.nvim")
-  vim.cmd.packadd("vim-sleuth")
-  vim.cmd.packadd("bufresize.nvim")
-  vim.cmd.packadd("persistence.nvim")
-  vim.cmd.packadd("project.nvim")
-  vim.cmd.packadd("plenary.nvim")
 
   -- Solarized
   do
-    local theme_grp = vim.api.nvim_create_augroup("MyThemeFixes", { clear = true })
-    vim.api.nvim_create_autocmd("ColorScheme", {
-      group = theme_grp,
-      callback = function()
-        set_marker_highlights()
-      end,
-    })
     require("solarized").setup({})
     vim.o.background = "dark"
     vim.cmd.colorscheme "solarized"
   end
 
-  -- Bufferline
-  require('bufferline').setup({
-    options = {
-      diagnostics = false,
-      show_buffer_close_icons = false,
-      show_close_icon = false,
-      separator_style = "slant",
-    },
-  })
-
   -- Lualine
   require('lualine').setup({
     options = {
-      refresh = { statusline = 500, tabline = 500, winbar = 500 },
       icons_enabled = true,
       globalstatus = true,
       theme = 'auto',
@@ -375,6 +313,9 @@ vim.schedule(function()
         statusline = {},
         winbar = {},
       },
+    },
+    tabline = {
+      lualine_a = { 'buffers' },
     },
     sections = {
       lualine_a = {
@@ -413,12 +354,10 @@ vim.schedule(function()
 
   -- Noice
   require("noice").setup({
-    timeout = 7000,
     lsp = {
       override = {
         ["vim.lsp.util.convert_input_to_markdown_lines"] = true,
         ["vim.lsp.util.stylize_markdown"] = true,
-        ["cmp.entry.get_documentation"] = true,
       },
     },
     presets = {
@@ -430,27 +369,6 @@ vim.schedule(function()
     },
     routes = {
       {
-        filter = {
-          any = { { event = "msg_show" }, { event = "notify" } },
-          find = "vim%.lsp%..*deprecated",
-        },
-        opts = { skip = true },
-      },
-      {
-        filter = {
-          any = { { event = "msg_show" }, { event = "notify" } },
-          find = "vim%.tbl_islist.*deprecated",
-        },
-        opts = { skip = true },
-      },
-      {
-        filter = {
-          any = { { event = "msg_show" }, { event = "notify" } },
-          find = "EPERM",
-        },
-        opts = { skip = true },
-      },
-      {
         filter = { event = "msg_show", any = {
           { find = "Visual%-Multi" },
           { find = "VM " },
@@ -461,39 +379,20 @@ vim.schedule(function()
     },
   })
 
-  -- Treesitter (new API: require("nvim-treesitter").setup)
-  require("nvim-treesitter").setup({
-    ensure_installed = {
-      "bash","c","cpp","diff","go","html","javascript","json","julia","lua","markdown",
-      "python","rust","toml","typescript","vim","vimdoc","xml","yaml","zig","csv",
-    },
-    sync_install = false,
-    auto_install = false,
-    highlight = {
-      enable = true,
-      additional_vim_regex_highlighting = false,
-    },
-    indent = { enable = true },
-    incremental_selection = {
-      enable = true,
-      keymaps = {
-        init_selection = "gnn",
-        node_incremental = "grn",
-        node_decremental = "grm",
-        scope_incremental = "grc",
-      },
-    },
+  -- Gitsigns attaches on BufRead; skip its setup for an empty start.
+  vim.api.nvim_create_autocmd({ "BufReadPre", "BufNewFile" }, {
+    once = true,
+    callback = function() vim.cmd.packadd("gitsigns.nvim") end,
   })
 
-  -- Gitsigns
-  require("gitsigns").setup({})
-
   -- Persistence
-  require("persistence").setup({
-    options = { "buffers", "curdir", "tabpages", "winsize" },
-    pre_save = function()
-      pcall(vim.cmd, "Neotree close")
-      pcall(vim.cmd, "Oil close")
+  vim.opt.sessionoptions = { "buffers", "curdir", "tabpages", "winsize" }
+  require("persistence").setup({})
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "PersistenceSavePre",
+    callback = function()
+      if package.loaded["neo-tree"] then vim.cmd("Neotree close") end
+      if vim.bo.filetype == "oil" then require("oil").close() end
     end,
   })
   vim.keymap.set("n", "<leader>qs", function() require("persistence").load() end,              { desc = "Persistence load session" })
@@ -502,7 +401,8 @@ vim.schedule(function()
   vim.keymap.set("n", "<leader>qd", function() require("persistence").stop() end,              { desc = "Persistence stop session" })
 
   -- Project.nvim
-  require("project_nvim").setup({})
+  -- The LSP detector calls buf_get_clients(), removed in Neovim 0.13.
+  require("project_nvim").setup({ detection_methods = { "pattern" } })
 
   -- Bufresize
   require("bufresize").setup({})
@@ -512,7 +412,9 @@ vim.schedule(function()
   ---------------------------------------------------------------------------
 
   -- Telescope (keys)
-  local function telescope_config()
+  load_on_command("telescope.nvim", "Telescope", function()
+    vim.cmd.packadd("telescope-fzf-native.nvim")
+    vim.cmd.packadd("telescope-ui-select.nvim")
     local telescope = require("telescope")
     local themes = require("telescope.themes")
     telescope.setup({
@@ -534,29 +436,14 @@ vim.schedule(function()
     pcall(telescope.load_extension, "fzf")
     pcall(telescope.load_extension, "ui-select")
     pcall(telescope.load_extension, "projects")
-  end
-
-  defer_keys("telescope.nvim", {
-    { "<leader>ff", desc = "Telescope find files" },
-    { "<leader>fg", desc = "Telescope live grep" },
-    { "<leader>fb", desc = "Telescope buffers" },
-    { "<leader>fh", desc = "Telescope help tags" },
-    { "<leader>p",  desc = "Toggle projects" },
-  }, function()
-    vim.cmd.packadd("telescope-fzf-native.nvim")
-    vim.cmd.packadd("telescope-ui-select.nvim")
-    telescope_config()
-    vim.keymap.set("n", "<leader>ff", "<cmd>Telescope find_files hidden=true<CR>", { desc = "Telescope find files" })
-    vim.keymap.set("n", "<leader>fg", function() require("telescope.builtin").live_grep() end, { desc = "Telescope live grep" })
-    vim.keymap.set("n", "<leader>fb", function() require("telescope.builtin").buffers() end, { desc = "Telescope buffers" })
-    vim.keymap.set("n", "<leader>fh", function() require("telescope.builtin").help_tags() end, { desc = "Telescope help tags" })
-    vim.keymap.set("n", "<leader>p", "<cmd>Telescope projects<CR>", { desc = "Toggle projects" })
   end)
+  vim.keymap.set("n", "<leader>ff", "<cmd>Telescope find_files hidden=true<CR>", { desc = "Telescope find files" })
+  vim.keymap.set("n", "<leader>fg", "<cmd>Telescope live_grep<CR>", { desc = "Telescope live grep" })
+  vim.keymap.set("n", "<leader>fb", "<cmd>Telescope buffers<CR>", { desc = "Telescope buffers" })
+  vim.keymap.set("n", "<leader>fh", "<cmd>Telescope help_tags<CR>", { desc = "Telescope help tags" })
+  vim.keymap.set("n", "<leader>p", "<cmd>Telescope projects<CR>", { desc = "Projects" })
 
-  -- Neo-tree (keys)
-  defer_keys("neo-tree.nvim", {
-    { "<leader>t", desc = "Toggle neo-tree" },
-  }, function()
+  load_on_command("neo-tree.nvim", "Neotree", function()
     require("neo-tree").setup({
       filesystem = {
         follow_current_file = { enabled = true },
@@ -569,36 +456,32 @@ vim.schedule(function()
         },
       },
     })
-    vim.keymap.set("n", "<leader>t", "<cmd>Neotree toggle<CR>", { desc = "Toggle neo-tree" })
   end)
+  vim.keymap.set("n", "<leader>t", "<cmd>Neotree toggle<CR>", { desc = "Toggle neo-tree" })
 
   -- Oil (keys)
-  defer_keys("oil.nvim", {
-    { "-", desc = "Open parent directory" },
-  }, function()
+  load_on_command("oil.nvim", "Oil", function()
     require("oil").setup({
       view_options = { show_hidden = true },
       case_insensitive = true,
     })
-    vim.keymap.set("n", "-", "<cmd>Oil<CR>", { desc = "Open parent directory" })
   end)
+  vim.keymap.set("n", "-", "<cmd>Oil<CR>", { desc = "Open parent directory" })
 
   -- Grug-far (keys + cmd)
-  defer_keys("grug-far.nvim", {
-    { "<leader>g", desc = "Grug" },
-  }, function()
-    vim.keymap.set("n", "<leader>g", "<cmd>GrugFar<CR>", { desc = "Grug" })
-  end)
+  load_on_command("grug-far.nvim", "GrugFar")
+  vim.keymap.set("n", "<leader>g", "<cmd>GrugFar<CR>", { desc = "Grug" })
 
+  -- Git and MSYS2 shells normally supply diff; native Windows shells may not.
+  if vim.fn.has("win32") == 1 and vim.fn.executable("diff") == 0 and vim.fn.executable("C:/msys64/usr/bin/diff.exe") == 1 then
+    vim.g.undotree_DiffCommand = "C:/msys64/usr/bin/diff.exe"
+  end
   -- Undotree (keys + cmd)
-  defer_keys("undotree", {
-    { "<leader>u", desc = "Toggle undotree" },
-  }, function()
-    vim.keymap.set("n", "<leader>u", "<cmd>UndotreeToggle<CR>", { desc = "Toggle undotree" })
-  end)
+  load_on_command("undotree", "Undotree*")
+  vim.keymap.set("n", "<leader>u", "<cmd>UndotreeToggle<CR>", { desc = "Toggle undotree" })
 
-  -- Which-key (immediate — we're already deferred via vim.schedule)
-  ensure_loaded("which-key.nvim", function()
+  -- Which-key
+  do
     local wk = require("which-key")
     wk.setup({ preset = "helix" })
     wk.add({
@@ -606,51 +489,45 @@ vim.schedule(function()
       { "<leader>f", group = "Telescope" },
       { "<leader>n", group = "EOL format" },
       { "<leader>q", group = "Persistence" },
-      { "<leader>t", desc = "Toggle neo-tree" },
-      { "<leader>g", desc = "Grug search/replace" },
-      { "<leader>u", desc = "Toggle undotree" },
-      { "<leader>p", desc = "Projects" },
-      { "<leader>w", desc = "Toggle wrap" },
-      { "<leader>e", desc = "Toggle EOF" },
-      { "<leader>x", desc = "Close buffer" },
-      { "<leader>s", desc = "Toggle solarized dark/light" },
     })
-  end)
+  end
 
   -- Nvim-autopairs (InsertEnter)
-  defer_event("nvim-autopairs", "InsertEnter", function()
-    require("nvim-autopairs").setup({})
-  end)
+  vim.api.nvim_create_autocmd("InsertEnter", {
+    once = true,
+    callback = function()
+      vim.cmd.packadd("nvim-autopairs")
+      require("nvim-autopairs").setup({})
+    end,
+  })
 
-  -- Ezbookmarks (keys)
-  defer_keys("ezbookmarks.nvim", {
-    { "<leader>ba", desc = "Add bookmark" },
-    { "<leader>br", desc = "Remove bookmark" },
-    { "<leader>bo", desc = "Open bookmark" },
-    { "<leader>bi", desc = "Ignore file" },
-    { "<leader>bu", desc = "Unignore file" },
-  }, function()
-    vim.keymap.set("n", "<leader>ba", function() require("ezbookmarks").AddBookmark() end,    { desc = "Add bookmark" })
-    vim.keymap.set("n", "<leader>br", function() require("ezbookmarks").RemoveBookmark() end, { desc = "Remove bookmark" })
-    vim.keymap.set("n", "<leader>bo", function() require("ezbookmarks").OpenBookmark() end,   { desc = "Open bookmark" })
-    vim.keymap.set("n", "<leader>bi", function() require("ezbookmarks").AddIgnore() end,      { desc = "Ignore file" })
-    vim.keymap.set("n", "<leader>bu", function() require("ezbookmarks").RemoveIgnore() end,   { desc = "Unignore file" })
-  end)
+  local function plugin_action(name, module, configure)
+    local plugin
+    return function(action)
+      return function()
+        if not plugin then
+          vim.cmd.packadd(name)
+          plugin = require(module)
+          if configure then plugin.setup({}) end
+        end
+        plugin[action]()
+      end
+    end
+  end
 
-  -- Flash.nvim (keys)
-  defer_keys("flash.nvim", {
-    { "s", desc = "Flash" },
-    { "S", desc = "Flash Treesitter" },
-    { "r", mode = "o", desc = "Remote Flash" },
-    { "R", mode = "o", desc = "Treesitter Search" },
-  }, function()
-    require("flash").setup({})
-    vim.keymap.set({ "n", "x", "o" }, "s", function() require("flash").jump() end, { desc = "Flash" })
-    vim.keymap.set({ "n", "x", "o" }, "S", function() require("flash").treesitter() end, { desc = "Flash Treesitter" })
-    vim.keymap.set("o", "r", function() require("flash").remote() end, { desc = "Remote Flash" })
-    vim.keymap.set({ "o", "x" }, "R", function() require("flash").treesitter_search() end, { desc = "Treesitter Search" })
-    vim.keymap.set("c", "<C-s>", function() require("flash").toggle() end, { desc = "Toggle Flash Search" })
-  end)
+  local bookmark = plugin_action("ezbookmarks.nvim", "ezbookmarks")
+  vim.keymap.set("n", "<leader>ba", bookmark("AddBookmark"), { desc = "Add bookmark" })
+  vim.keymap.set("n", "<leader>br", bookmark("RemoveBookmark"), { desc = "Remove bookmark" })
+  vim.keymap.set("n", "<leader>bo", bookmark("OpenBookmark"), { desc = "Open bookmark" })
+  vim.keymap.set("n", "<leader>bi", bookmark("AddIgnore"), { desc = "Ignore file" })
+  vim.keymap.set("n", "<leader>bu", bookmark("RemoveIgnore"), { desc = "Unignore file" })
+
+  local flash = plugin_action("flash.nvim", "flash", true)
+  vim.keymap.set({ "n", "x", "o" }, "s", flash("jump"), { desc = "Flash" })
+  vim.keymap.set({ "n", "x", "o" }, "S", flash("treesitter"), { desc = "Flash Treesitter" })
+  vim.keymap.set("o", "r", flash("remote"), { desc = "Remote Flash" })
+  vim.keymap.set({ "o", "x" }, "R", flash("treesitter_search"), { desc = "Treesitter Search" })
+  vim.keymap.set("c", "<C-s>", flash("toggle"), { desc = "Toggle Flash Search" })
 
   -- Vim-visual-multi (keys)
   vim.g.VM_sublime_mappings = true
@@ -659,8 +536,10 @@ vim.schedule(function()
     ['Find Under'] = '<C-d>',
     ['Find Subword Under'] = '<C-d>',
   }
-  defer_keys("vim-visual-multi", {
-    { "<C-d>", desc = "VM Find Under" },
-  }, function() end)
-
-end) -- vim.schedule
+  local vm_modes = { "n", "x" }
+  vim.keymap.set(vm_modes, "<C-d>", function()
+    vim.keymap.del(vm_modes, "<C-d>")
+    vim.cmd.packadd("vim-visual-multi")
+    vim.api.nvim_feedkeys(vim.keycode("<C-d>"), "im", false)
+  end, { desc = "VM Find Under" })
+end
