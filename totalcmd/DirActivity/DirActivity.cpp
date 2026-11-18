@@ -1,11 +1,9 @@
 #include <windows.h>
 #include <algorithm>
 #include <climits>
-#include <atomic>
-#include <condition_variable>
+#include <future>
 #include <map>
 #include <mutex>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -19,22 +17,6 @@ struct PathLess {
     }
 };
 using Times = std::map<std::wstring, Stamp, PathLess>;
-struct DirectorySample {
-    std::wstring containingDirectory;
-    Stamp latestLocalWrite = 0;
-    ULONGLONG checked = 0;
-    int displayedBand = 2;
-    bool queued = false;
-};
-static Times indexed;
-static std::map<std::wstring, DirectorySample, PathLess> directorySamples;
-static std::set<std::wstring, PathLess> pending;
-static std::mutex cacheLock;
-static bool running;
-static std::atomic<bool> stopping;
-static std::condition_variable wake;
-extern "C" IMAGE_DOS_HEADER __ImageBase;
-
 static Stamp ticks(FILETIME t) {
     return (static_cast<Stamp>(t.dwHighDateTime) << 32) | t.dwLowDateTime;
 }
@@ -142,7 +124,7 @@ static Times readIndex() {
     if (SendMessageTimeoutW(server, WM_COPYDATA, reinterpret_cast<WPARAM>(reply),
             reinterpret_cast<LPARAM>(&data), SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &accepted) && accepted) {
         ULONGLONG deadline = GetTickCount64() + 3000;
-        while (bytes.empty() && !stopping) {
+        while (bytes.empty()) {
             MSG msg;
             PeekMessageW(&msg, reply, WM_NULL, WM_NULL, PM_NOREMOVE); // dispatch sent messages
             if (!bytes.empty() || GetTickCount64() >= deadline) break;
@@ -151,125 +133,6 @@ static Times readIndex() {
     }
     DestroyWindow(reply);
     return decode(bytes);
-}
-static Stamp lookup(const std::wstring &path, Stamp directWrite) {
-    auto it = indexed.find(path);
-    return it == indexed.end() ? directWrite : (std::max)(directWrite, it->second);
-}
-
-static BOOL CALLBACK findCommander(HWND window, LPARAM output) {
-    DWORD pid;
-    GetWindowThreadProcessId(window, &pid);
-    wchar_t name[64];
-    if (pid != GetCurrentProcessId() || !GetClassNameW(window, name, _countof(name)) ||
-        wcscmp(name, L"TTOTAL_CMD") != 0) return TRUE;
-    *reinterpret_cast<HWND *>(output) = window;
-    return FALSE;
-}
-
-static DWORD_PTR panelInfo(HWND window, WPARAM id) {
-    DWORD_PTR result = 0;
-    SendMessageTimeoutW(window, WM_USER + 50, id, 0, SMTO_ABORTIFHUNG, 100, &result);
-    return result;
-}
-
-struct Panel {
-    HWND window = nullptr;
-    DWORD_PTR side = 0;
-    std::wstring path;
-};
-static bool samePath(const std::wstring &a, const std::wstring &b) {
-    return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
-}
-
-static Panel activePanel() {
-    Panel panel;
-    EnumWindows(findCommander, reinterpret_cast<LPARAM>(&panel.window));
-    if (!panel.window) return panel;
-    panel.side = panelInfo(panel.window, 1000);
-    if (panel.side != 1 && panel.side != 2) return panel;
-    HWND label = reinterpret_cast<HWND>(panelInfo(panel.window, 8 + panel.side));
-    wchar_t caption[32768];
-    DWORD_PTR length = 0;
-    if (label && SendMessageTimeoutW(label, WM_GETTEXT, _countof(caption),
-            reinterpret_cast<LPARAM>(caption), SMTO_ABORTIFHUNG, 100, &length) && length) {
-        std::wstring text(caption);
-        size_t slash = text.rfind(L'\\');
-        if (slash != std::wstring::npos) panel.path = key(text.substr(0, slash));
-    }
-    return panel;
-}
-
-static int colorBand(Stamp stamp) {
-    int minutes = minutesSinceWrite(stamp);
-    return minutes < 15 ? 0 : minutes < 60 ? 1 : 2;
-}
-
-static void CALLBACK update(PTP_CALLBACK_INSTANCE callback, void *module) {
-    FreeLibraryWhenCallbackReturns(callback, static_cast<HMODULE>(module));
-    Panel lastPanel;
-    ULONGLONG nextPoll = 0;
-    for (;;) {
-        {
-            std::lock_guard guard(cacheLock);
-            if (stopping) { running = false; break; }
-        }
-        bool poll = GetTickCount64() >= nextPoll;
-        Panel panel = poll ? activePanel() : lastPanel;
-        bool switched = panel.side != lastPanel.side || !samePath(panel.path, lastPanel.path);
-        if (poll) {
-            Times next = readIndex();
-            std::lock_guard guard(cacheLock);
-            indexed.swap(next);
-        }
-
-        decltype(pending) batch;
-        {
-            std::lock_guard guard(cacheLock);
-            pending.swap(batch);
-            if (poll) {
-                for (auto it = directorySamples.begin(); it != directorySamples.end();) {
-                    if (samePath(it->second.containingDirectory, panel.path)) batch.insert(it->first);
-                    else if (!it->second.queued && GetTickCount64() - it->second.checked > 60000) {
-                        it = directorySamples.erase(it);
-                        continue;
-                    }
-                    ++it;
-                }
-            }
-        }
-        bool repaint = false;
-        for (const auto &path : batch) {
-            if (stopping) break;
-            Stamp directoryWrite = 0;
-            Stamp directWrite = latestDirectFileWrite(path, directoryWrite);
-            std::lock_guard guard(cacheLock);
-            auto &entry = directorySamples[path];
-            entry.latestLocalWrite = (std::max)(directoryWrite, directWrite);
-            entry.checked = GetTickCount64();
-            entry.queued = false;
-            if (!panel.path.empty() && samePath(entry.containingDirectory, panel.path))
-                repaint |= switched || entry.displayedBand != colorBand(lookup(path, entry.latestLocalWrite));
-        }
-        if (repaint && IsWindowEnabled(panel.window)) {
-            Panel current = activePanel();
-            if (samePath(current.path, panel.path) && current.side == panel.side &&
-                !panelInfo(panel.window, 1004 + panel.side))
-                PostMessageW(panel.window, WM_USER + 51, 540, 0); // cm_RereadSource
-        }
-        lastPanel = std::move(panel);
-        if (poll) nextPoll = GetTickCount64() + refreshMs;
-        std::unique_lock lock(cacheLock);
-        auto now = GetTickCount64();
-        wake.wait_for(lock, std::chrono::milliseconds(nextPoll > now ? nextPoll - now : 0),
-                      [] { return stopping || !pending.empty(); });
-    }
-}
-
-extern "C" void WINAPI ContentPluginUnloading() {
-    std::lock_guard guard(cacheLock);
-    stopping = true;
-    wake.notify_one();
 }
 extern "C" int WINAPI ContentGetSupportedField(int index, char *name, char *units, int size) {
     if (index != 0) return 0;
@@ -281,27 +144,25 @@ extern "C" int WINAPI ContentGetSupportedField(int index, char *name, char *unit
 extern "C" int WINAPI ContentGetValueW(const wchar_t *path, int index, int, void *value, int, int) {
     if (index != 0) return -1;
     std::wstring folder = key(path);
+    static std::mutex cacheLock;
+    static Times indexed, sampled;
+    static ULONGLONG nextQuery = 0;
     std::lock_guard guard(cacheLock);
-    stopping = false;
-    auto &entry = directorySamples[folder];
-    if (entry.containingDirectory.empty()) entry.containingDirectory = folder.substr(0, folder.rfind(L'\\'));
-    if (!entry.queued && (!entry.checked || GetTickCount64() - entry.checked >= refreshMs)) {
-        entry.queued = true;
-        pending.insert(folder);
-        wake.notify_one();
+    if (GetTickCount64() >= nextQuery) {
+        // Receive Everything's window messages on a worker, outside the caller's UI thread.
+        indexed = std::async(std::launch::async, readIndex).get();
+        sampled.clear();
+        nextQuery = GetTickCount64() + refreshMs;
     }
-    if (entry.queued) {
-        if (!running) {
-            HMODULE module;
-            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-                    reinterpret_cast<LPCWSTR>(&__ImageBase), &module)) {
-                running = TrySubmitThreadpoolCallback(update, module, nullptr) != FALSE;
-                if (!running) FreeLibrary(module);
-            }
-        }
+    auto [it, inserted] = sampled.try_emplace(folder, 0);
+    if (inserted) {
+        Stamp directoryWrite = 0;
+        Stamp directWrite = latestDirectFileWrite(folder, directoryWrite);
+        it->second = (std::max)(directoryWrite, directWrite);
+        auto hit = indexed.find(folder);
+        if (hit != indexed.end()) it->second = (std::max)(it->second, hit->second);
     }
-    Stamp stamp = lookup(folder, entry.latestLocalWrite);
-    entry.displayedBand = colorBand(stamp);
+    Stamp stamp = it->second;
     if (!stamp) return -3; // ft_fieldempty
     *static_cast<int *>(value) = minutesSinceWrite(stamp);
     return 1;

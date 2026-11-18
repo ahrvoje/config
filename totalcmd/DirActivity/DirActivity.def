@@ -2,4 +2,3 @@ EXPORTS
     ContentGetSupportedField
     ContentGetValue
     ContentGetValueW
-    ContentPluginUnloading

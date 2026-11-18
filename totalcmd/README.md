@@ -31,7 +31,7 @@ With Everything running, an indexed file modified within the last 15 minutes tur
 
 DirActivity queries Everything directly. It supports the standard instance and the named `1.5a` instance. ES is unnecessary. Without an index, the plugin checks files directly inside each folder.
 
-The active file panel updates while idle. A background worker checks about every five seconds, then asks Total Commander to refresh when a folder changes color. It defers the refresh while items are marked or a modal dialog is open. Switch to the other panel to enable live updates there.
+DirActivity calculates colors when Total Commander reads a file list. It reuses results for up to five seconds. To update the colors in an idle panel, press **Ctrl+R**.
 
 To rebuild DirActivity, use an x86 or x64 Visual Studio Developer Command Prompt. Compile `DirActivity.cpp` with `/std:c++17 /O2 /MT /EHsc /LD`, add the SDK’s `ipc` directory to the include path, and link with `user32.lib /DEF:DirActivity.def`. Use the output name `DirActivity.wdx` for x86 and `DirActivity.wdx64` for x64. The SDK supplies the protocol header at build time. [Everything SDK](https://www.voidtools.com/support/everything/sdk/)
 
