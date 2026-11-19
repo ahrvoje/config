@@ -27,9 +27,9 @@ Total Commander writes plugin registrations to `plugins.ini`, the Start menu and
 
 Total Commander uses the first matching rule. Symbolic links, junctions and hard-linked files keep their link colors at every age. Other items appear white for the first 15 minutes after modification, then light gray until one hour. After that, a video such as `.mkv` or `.mp4` appears bright cyan (`#00FFFF`). Subtitle files such as `.srt`, `.ass` and `.vtt` use the default gray (`#88959F`).
 
-With Everything running, an indexed file modified within the last 15 minutes turns each containing directory white up to the drive root. The folders appear light gray from 15 to 60 minutes. The folder’s own modification time also counts. For example, rebuilding `C:\repos\sandy_cli\x64\Release\sandy.exe` can highlight `Release`, `x64`, `sandy_cli` and `repos`. Drive buttons and the `[..]` navigation entry use Total Commander’s own appearance.
+With Everything running, an indexed file or directory modified within the last 15 minutes turns each containing directory white up to the drive root. The folders appear light gray from 15 to 60 minutes. The folder’s own modification time also counts. For example, rebuilding `C:\repos\sandy_cli\x64\Release\sandy.exe` can highlight `Release`, `x64`, `sandy_cli` and `repos`. Drive buttons and the `[..]` navigation entry use Total Commander’s own appearance.
 
-DirActivity queries Everything directly. It supports the standard instance and the named `1.5a` instance. ES is unnecessary. Without an index, the plugin checks files directly inside each folder.
+DirActivity queries Everything directly. It supports the standard instance and the named `1.5a` instance. ES is unnecessary. Without an index, the plugin checks each folder and its immediate files and subdirectories.
 
 DirActivity calculates colors when Total Commander reads a file list. It reuses results for up to five seconds. To update the colors in an idle panel, press **Ctrl+R**.
 

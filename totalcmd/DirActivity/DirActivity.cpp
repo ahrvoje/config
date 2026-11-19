@@ -36,21 +36,20 @@ static std::wstring key(std::wstring path) {
     return path;
 }
 
-static Stamp latestDirectFileWrite(const std::wstring &folder, Stamp &directoryWrite) {
+static Stamp latestDirectWrite(const std::wstring &folder) {
     std::wstring mask = folder + L"\\";
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (!GetFileAttributesExW(mask.c_str(), GetFileExInfoStandard, &info)) return 0;
     DWORD attrs = info.dwFileAttributes;
     if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY) ||
         (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return 0;
-    directoryWrite = ticks(info.ftLastWriteTime);
+    Stamp newest = ticks(info.ftLastWriteTime);
     mask += L'*';
     WIN32_FIND_DATAW entry;
     HANDLE search = FindFirstFileW(mask.c_str(), &entry);
-    if (search == INVALID_HANDLE_VALUE) return 0;
-    Stamp newest = 0;
+    if (search == INVALID_HANDLE_VALUE) return newest;
     do {
-        if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        if (wcscmp(entry.cFileName, L".") != 0 && wcscmp(entry.cFileName, L"..") != 0)
             newest = (std::max)(newest, ticks(entry.ftLastWriteTime));
     } while (FindNextFileW(search, &entry));
     FindClose(search);
@@ -116,9 +115,9 @@ static Times readIndex() {
     ChangeWindowMessageFilterEx(reply, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
     struct {
         EVERYTHING_IPC_QUERY2 header;
-        wchar_t search[sizeof(L"file: dm:last60minutes") / sizeof(wchar_t)];
+        wchar_t search[sizeof(L"dm:last60minutes") / sizeof(wchar_t)];
     } request = {{HandleToULong(reply), 1, 0, 0, EVERYTHING_IPC_ALLRESULTS, fields,
-                  EVERYTHING_IPC_SORT_NAME_ASCENDING}, L"file: dm:last60minutes"};
+                  EVERYTHING_IPC_SORT_NAME_ASCENDING}, L"dm:last60minutes"};
     COPYDATASTRUCT data = {EVERYTHING_IPC_COPYDATA_QUERY2W, sizeof(request), &request};
     DWORD_PTR accepted = 0;
     if (SendMessageTimeoutW(server, WM_COPYDATA, reinterpret_cast<WPARAM>(reply),
@@ -156,9 +155,7 @@ extern "C" int WINAPI ContentGetValueW(const wchar_t *path, int index, int, void
     }
     auto [it, inserted] = sampled.try_emplace(folder, 0);
     if (inserted) {
-        Stamp directoryWrite = 0;
-        Stamp directWrite = latestDirectFileWrite(folder, directoryWrite);
-        it->second = (std::max)(directoryWrite, directWrite);
+        it->second = latestDirectWrite(folder);
         auto hit = indexed.find(folder);
         if (hit != indexed.end()) it->second = (std::max)(it->second, hit->second);
     }
