@@ -81,11 +81,12 @@ end
 
 -- highlight on yank
 local group = vim.api.nvim_create_augroup('YankHighlight', { clear = true })
+local highlight_yank = vim.hl.hl_op or vim.hl.on_yank -- Neovim 0.12 fallback
 vim.api.nvim_create_autocmd('TextYankPost', {
   group = group,
   pattern = '*',
   callback = function()
-    vim.hl.on_yank { higroup = 'IncSearch', timeout = 200 }
+    highlight_yank { higroup = 'IncSearch', timeout = 200 }
   end,
   desc = 'Briefly highlight yanked text',
 })
@@ -357,7 +358,6 @@ do
     lsp = {
       override = {
         ["vim.lsp.util.convert_input_to_markdown_lines"] = true,
-        ["vim.lsp.util.stylize_markdown"] = true,
       },
     },
     presets = {
